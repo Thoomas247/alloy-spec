@@ -26,6 +26,13 @@ pub fn String::from(text: &[u8]) -> String {
     return result;
 }
 
+// Allocates a string able to hold at least 'size' bytes before growing.
+pub fn String::with_capacity(size: u64) -> String {
+    var str = String { .storage = ::None, .count = 0 };
+    str.ensure_capacity(size);
+    return str;
+}
+
 // The number of bytes in use (the Iterable requirement).
 pub fn length(self string: &String) -> u64 {
     return string.count;
