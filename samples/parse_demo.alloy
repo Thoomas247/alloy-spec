@@ -99,7 +99,7 @@ fn main() -> i32 {
         yield "fell through";
     };
 
-    const doubler = |&var compare| (x: i64) -> i64 {
+    const doubler = |compare: &var| (x: i64) -> i64 {
         return x * 2;
     };
 

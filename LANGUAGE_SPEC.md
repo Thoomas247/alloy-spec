@@ -240,8 +240,7 @@ anon_struct_init  = "{" [ member_init { "," member_init } ] "}" ;
 member_init       = "." ident "=" expression ;
 
 lambda_expr       = [ "|" [ capture { "," capture } ] "|" ] function ;
-capture           = type_modifier ident
-                  | ident ":" ( type | type_modifier ) ;
+capture           = ident [ ":" ( type | type_modifier ) ] ;
 
 if_expr     = "if" "(" expression ")" [ "|" capture "|" ]
               statement [ "else" statement ] ;
@@ -318,7 +317,10 @@ reference to it":
   captured value's type is itself a pointer (`*T` / `*var T` / `*[T]`), and
   the subject must be mutable.
 
-Lambda capture lists additionally accept the prefix-modifier form (`|&var x|`).
+This is the only capture syntax, and it is identical at every capture site —
+lambda capture lists, `if` / `is`, `for`, and `match` arms. A modifier written
+**before** the name (`|&var x|`) is not valid Alloy.
+
 Interface-object captures are the exception to the copy default: they always
 bind by reference, mirroring the subject's indirection (§3.2).
 
@@ -663,7 +665,7 @@ Ownership is **structural and automatic**. A value _owns heap_ if it is a `*T` /
 - **Free-on-reassign.** Assigning to an owning binding (`buf = new […]`, `obj.field = move p`) first drops whatever that binding currently owns, then stores the new value — so the previous allocation is reclaimed rather than leaked.
 - **Integer overflow:** arithmetic that exceeds its type's range is a **runtime fault in checked builds** (like the null checks below) and **wraps two's-complement in release builds**. Compile-time evaluation and the interpreter always fault. Division by zero is a fault in every build mode.
 - **Debug builds** insert a null check on every dereference of a `*T` binding. A use-after-move accesses the null slot and traps (`@llvm.trap`). **Release builds** skip the null checks, so a use-after-move dereferences null and the OS faults. The null-store on `move` itself is kept in every build mode: it is the moved-from mark the drop machinery reads, so scope-end drops and free-on-reassign stay single-free after a transfer.
-- **Definite use-after-move is a compile-time error.** The compiler tracks moves of bare local variables flow-sensitively: after `move x` (or an owning lambda capture `|*x|`), reading `x`, writing through `x.field`, moving it again, or capturing it is rejected at compile time — until a plain `=` rebinds it. The analysis merges branches conservatively: a move survives a merge only when every falling-through path performs it, so moves under a condition, inside one branch, inside a loop body, or of a field (`move x.inner`) remain checked **runtime** faults rather than compile errors.
+- **Definite use-after-move is a compile-time error.** The compiler tracks moves of bare local variables flow-sensitively: after `move x` (or an owning lambda capture `|x: *|`), reading `x`, writing through `x.field`, moving it again, or capturing it is rejected at compile time — until a plain `=` rebinds it. The analysis merges branches conservatively: a move survives a merge only when every falling-through path performs it, so moves under a condition, inside one branch, inside a loop body, or of a field (`move x.inner`) remain checked **runtime** faults rather than compile errors.
 
 **Growth is manual.** A `*[T]` array has a fixed length once allocated (its length lives in the `user_ptr - 8` prefix); there is no in-place resize or `realloc` primitive. A growable collection (`Vector`/`String`) is built by hand: allocate a larger `*var [T]` buffer with a runtime-sized `new [value : count]`, copy the elements across, and reassign the owning field — free-on-reassign reclaims the old buffer automatically. The standard library's generic `Vector<T>` (`std/vector.alloy`) and owning `String` (`std/string.alloy`) are written exactly this way; their mutating operations (`push`, `append`, …) take a `&var self` receiver and are invoked as methods (`vector.push(x)`).
 
@@ -749,13 +751,13 @@ var x = match (subject) {
 ### 4.4 Lambda / Closure Semantics
 
 ```alloy
-|&var x, y| (param: T) -> R { body }
+|x: &var, y| (param: T) -> R { body }
 
 ```
 
-- The optional capture list (`|...|`) names variables from the enclosing scope. Each capture may carry a type modifier (`&`, `&var`, `*`, `*var`) that controls how the outer variable is accessed within the lambda.
+- The optional capture list (`|...|`) names variables from the enclosing scope. Each capture may carry an annotation after its name (`|x: &var|`) whose type modifier (`&`, `&var`, `*`, `*var`) controls how the outer variable is accessed within the lambda; the capture-typing rules of §2.1 apply unchanged.
 - Capture lists are **value-only**. Type names — including the enclosing function's generic type parameters — remain visible inside the lambda's parameter types, return type, and body without being captured.
-- A `*` / `*var` capture is an **owning capture**: it takes ownership of the captured variable, moving its pointer into the closure environment. The outer binding is invalid (moved-from) after the lambda expression. Valid only for pointer-typed variables (§2.1 Capture typing).
+- A `*` / `*var` capture (`|x: *|`) is an **owning capture**: it takes ownership of the captured variable, moving its pointer into the closure environment. The outer binding is invalid (moved-from) after the lambda expression. Valid only for pointer-typed variables (§2.1 Capture typing).
 - The parameter list and optional return type follow the same syntax as a regular function.
 - The type of a lambda expression is the corresponding function type `(T) -> R`.
 - A lambda with no captures may omit the capture delimiters: `(param: T) { ... }`.
