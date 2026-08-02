@@ -1,0 +1,22 @@
+// The built-in compile-time macros (LANGUAGE_SPEC.md section 6.4).
+//
+// Like the standard interfaces, these are declared but not implemented:
+// a declaration-only macro carries no body, and the compiler supplies the
+// behavior when one is invoked. All are called with a leading '#' inside
+// compile-time evaluation.
+
+// The '#Type' of the argument expression's type (section 3.4).
+pub macro type_of(value);
+
+// A fresh, empty struct '#Type', for synthesising a type.
+pub macro struct_type();
+
+// A fresh, empty enum '#Type'.
+pub macro enum_type();
+
+// The '#Type's of every type in the merged unit implementing the
+// interface, whole-world across libraries (section 6.4).
+pub macro implementers_of(target);
+
+// The variant name of an enum value, as a string.
+pub macro name_of(value);

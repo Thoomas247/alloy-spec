@@ -137,7 +137,9 @@ type_def        = "type" ident [ "<" type_param { "," type_param } ">" ] [ ":" i
 interface_def   = "interface" ident "{" { interface_fn } "}" ;
 interface_fn    = "fn" ident "(" [ param { "," param } ] ")" [ "->" type ] terminator ;
 fn_def          = "fn" [ ident "::" ] ident [ "<" type_param { "," type_param } ">" ] function ;
-macro_def       = "macro" ident "(" [ param { "," param } ] ")" stmt_block ;
+macro_def       = "macro" ident "(" [ macro_param { "," macro_param } ] ")"
+                  ( stmt_block | terminator ) ;
+macro_param     = ident [ ":" type ] ;
 extern_def      = "extern" ident "(" extern_params ")" [ "->" type ] terminator ;
 extern_params   = /* empty */
                 | param { "," param } [ "," "..." ]
@@ -953,7 +955,7 @@ A fault during compile-time evaluation (integer overflow, division by zero, an e
 
 To eliminate cross-compilation target safety errors and prevent memory leakage from host architectures into generated binaries, compile-time blocks are bound to strict computational constraints:
 
-- **The Pointer Barrier:** A compile-time evaluation block cannot yield an unmanaged reference (`&T`), a managed pointer (`*T`), or a closure (which owns captured references) that escapes into a runtime variable. Any data crossing the boundary from compile-time execution to a runtime variable state must be handled strictly as values. Breaking this constraint triggers a compile-time error. Slices (`&[T]`) and heap arrays (`*[T]`) are the exception: a slice or heap-array result is **materialized** — deep-copied into static program data — so a comptime call yielding a string works.
+- **The Pointer Barrier:** A compile-time evaluation block cannot yield an unmanaged reference (`&T`), a managed pointer (`*T`), a heap array (`*[T]`), or a closure (which owns captured references) that escapes into a runtime variable. Any data crossing the boundary from compile-time execution to a runtime variable state must be handled strictly as values. Breaking this constraint triggers a compile-time error. Slices (`&[T]`) are the exception: a slice result is **materialized** — deep-copied into static program data — so a comptime call yielding a string works. A comptime result is always a value or a slice, never an owning pointer: static data has no owner to free it.
 - **Strict Sandboxing Boundaries:** The compile-time interpreter is strictly restricted to the project's physical root directory workspace (mirroring physical filesystem rules §5.4).
 - **Foreign Function Isolation:** Comptime blocks are strictly prohibited from invoking low-level `extern` C functions (§5.3). Compile-time evaluation can only run safe user-defined Alloy code or built-in system macros.
 
@@ -968,6 +970,7 @@ macro readTypeFromJson(path: &[u8]) {
 ```
 
 - **Signature and Inferred Types:** Macros are defined using the `macro` keyword. While macro input parameters are strictly typed, **macro return types are completely inferred by the compiler** based on the generated AST layout or the underlying type node replacement it yields.
+- **Declaration-only macros:** A macro may be declared without a body (`pub macro type_of(value);`), analogous to an interface's functions: the compiler supplies the implementation. A declaration-only macro's parameters need no type annotations; a macro **with** a body must type every parameter. Invoking a declared macro the compiler does not implement is a compile-time error. The built-in macros (§6.4) are declared this way in `std::macros`.
 - **Invocation Syntax:** To explicitly distinguish macros from standard functions, all macro calls must be preceded by the `#` character token.
 - **Declaration Order:** Because a macro's result type is inferred from the value it produces, the compiler evaluates a macro the moment it checks the invocation site. Every definition a macro's body touches (functions, types, other macros) must therefore appear **earlier in program order** than the invocation. (`#` expressions calling only regular functions are exempt: their signatures are known statically, so evaluation waits until checking completes and forward references work.)
 - **Value Position:** A macro invoked in value position (`const x = #m(1)`) takes the type of the value its body produced. Legal results are plain values: primitives, bools, strings and slices, fixed arrays, and named struct or enum values. A `#Type` result or a pointer in value position is a compile-time error (§3.4, §6.2).
@@ -981,7 +984,7 @@ type P = #if (DEVELOPMENT) yield struct { id: u32 } else yield #readTypeFromJson
 
 ### 6.4 Built-in Macros
 
-The compiler provides a small set of built-in macros. Like all macros they are invoked with a leading `#`.
+The compiler provides a small set of built-in macros, declared — but not implemented — in the standard library module `std::macros` (§6.3 declaration-only macros), so they are discoverable like any other definition. Using one requires `import std::macros;`. Like all macros they are invoked with a leading `#`.
 
 | Macro             | Signature                | Semantics                                                 |
 | ----------------- | ------------------------ | --------------------------------------------------------- |
@@ -989,6 +992,7 @@ The compiler provides a small set of built-in macros. Like all macros they are i
 | `struct_type`     | `() -> #Type`            | A fresh, empty struct `#Type`, for synthesising a type.   |
 | `enum_type`       | `() -> #Type`            | A fresh, empty enum `#Type`.                              |
 | `implementers_of` | `(interface) -> [#Type]` | Every type in the merged unit implementing the interface. |
+| `name_of`         | `(value) -> &[u8]`       | The variant name of an enum value, as a string.           |
 
 A type may also be reflected directly by prefixing its name with `#` (`#u32`, `#Packet`) — see §3.4.
 
