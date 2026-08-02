@@ -239,7 +239,7 @@ named_struct_init = ident { "::" ident } "{" [ member_init { "," member_init } ]
 anon_struct_init  = "{" [ member_init { "," member_init } ] "}" ;
 member_init       = "." ident "=" expression ;
 
-lambda_expr       = [ "|" [ capture { "," capture } ] "|" ] function ;
+lambda_expr       = [ "|" capture { "," capture } "|" ] function ;
 capture           = ident [ ":" ( type | type_modifier ) ] ;
 
 if_expr     = "if" "(" expression ")" [ "|" capture "|" ]
@@ -760,7 +760,7 @@ var x = match (subject) {
 - A `*` / `*var` capture (`|x: *|`) is an **owning capture**: it takes ownership of the captured variable, moving its pointer into the closure environment. The outer binding is invalid (moved-from) after the lambda expression. Valid only for pointer-typed variables (§2.1 Capture typing).
 - The parameter list and optional return type follow the same syntax as a regular function.
 - The type of a lambda expression is the corresponding function type `(T) -> R`.
-- A lambda with no captures may omit the capture delimiters: `(param: T) { ... }`.
+- A lambda with no captures omits the capture delimiters entirely: `(param: T) { ... }`. An empty capture list (`||`) is not valid Alloy — a capture list, when written, names at least one capture.
 - A named, non-generic function used in value position becomes a function value of its signature's type. A generic function cannot become a function value (its type parameters are unbound), an overloaded name needs a unique function, and an extern function cannot be used as a function value.
 - Function values have no defined identity or structural equality: comparing them with `==` / `!=` is a compile-time error.
 
