@@ -1,7 +1,7 @@
 import std::option;
 import std::iterable;
 import std::number;
-import std::vec as vectors;
+import std::vector as vectors;
 
 type Packet : Serializable, Iterable = struct {
     id: u32,
