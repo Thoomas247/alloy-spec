@@ -90,7 +90,7 @@ pub fn clear(self string: &var String) {
 
 // True when the contents equal the given text byte for byte.
 pub fn equals(self string: &String, text: &[u8]) -> bool {
-    return text_equals(string.view(), text);
+    return text_equals(&string.view(), text);
 }
 
 // True when two byte sequences match exactly.
