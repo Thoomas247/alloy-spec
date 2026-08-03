@@ -3,7 +3,7 @@ import std::iterable;
 import std::number;
 import std::vector as vectors;
 
-type Packet : Serializable, Iterable = struct {
+type Packet : Serializable, Iterable<u64, PacketCursor> = struct {
     id: u32,
     payload: *[u8],
 };
@@ -31,20 +31,22 @@ pub fn length(self p: &Packet) -> u64 {
     return p.payload.length();
 }
 
-type PacketCursor = struct {
+type PacketCursor : Iterator<u64> = struct {
     remaining: u64,
+    current: u64,
 };
 
 fn iterator(self p: &Packet) -> PacketCursor {
-    return PacketCursor { .remaining = p.id };
+    return PacketCursor { .remaining = p.id, .current = 0 };
 }
 
-fn next(self c: &var PacketCursor) -> Option<u64> {
+fn next(self c: &var PacketCursor) -> Option<&u64> {
     if (c.remaining == 0) {
         return Option::None;
     };
     c.remaining -= 1;
-    return Option::Some(c.remaining);
+    c.current = c.remaining;
+    return Option::Some(&c.current);
 }
 
 fn describe(handle: &Serializable) -> bool {

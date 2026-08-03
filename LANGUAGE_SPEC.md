@@ -133,9 +133,10 @@ module          = { import_decl } { definition } EOF ;
 import_decl     = "import" ident { "::" ident } [ "as" ident ] terminator ;
 
 definition      = [ "pub" | "exp" ] ( type_def | fn_def | extern_def | interface_def | macro_def ) ;
-type_def        = "type" ident [ "<" type_param { "," type_param } ">" ] [ ":" ident { "," ident } ] "=" base_type terminator ;
-interface_def   = "interface" ident "{" { interface_fn } "}" ;
+type_def        = "type" ident [ "<" type_param { "," type_param } ">" ] [ ":" interface_marker { "," interface_marker } ] "=" base_type terminator ;
+interface_def   = "interface" ident [ "<" type_param { "," type_param } ">" ] "{" { interface_fn } "}" ;
 interface_fn    = "fn" ident "(" [ param { "," param } ] ")" [ "->" type ] terminator ;
+interface_marker = ident [ "<" type { "," type } ">" ] ;
 fn_def          = "fn" [ ident "::" ] ident [ "<" type_param { "," type_param } ">" ] function ;
 macro_def       = "macro" ident "(" [ macro_param { "," macro_param } ] ")"
                   ( stmt_block | terminator ) ;
@@ -145,7 +146,7 @@ extern_params   = /* empty */
                 | param { "," param } [ "," "..." ]
                 | "..." ;
 
-type_param      = ident [ ":" ident ] ;
+type_param      = ident [ ":" interface_marker ] ;
 
 (* Functions *)
 function        = "(" [ param { "," param } ] ")" [ "->" type ] stmt_block ;
@@ -494,7 +495,7 @@ All are evaluated at compile time and called with dot syntax on a `#Type` value.
 | `is_enum`              | `() -> bool`                 | True iff the type is an enum.                                                                                                                                                                                                                                                                              |
 | `is_primitive`         | `() -> bool`                 | True iff the type is a built-in primitive.                                                                                                                                                                                                                                                                 |
 | `is_interface`         | `() -> bool`                 | True iff the type is an interface.                                                                                                                                                                                                                                                                         |
-| `implements_interface` | `(other: #Type) -> bool`     | True iff this type implements `other` (an interface), by the same conformance rule as §5.2 — declared markers resolved by definition identity (same-named interfaces from different libraries never confuse it) plus lang-item conformance (`Number`, `Iterable`). Synthesised `#Type`s implement nothing. |
+| `implements_interface` | `(other: #Type) -> bool`     | True iff this type implements `other` (an interface), by the same conformance rule as §5.2 — declared markers resolved by definition identity (same-named interfaces from different libraries never confuse it) plus `Number` lang-item conformance for the primitives. A generic interface matches by definition, ignoring its instantiation arguments. Synthesised `#Type`s implement nothing. |
 | `name`                 | `() -> &[u8]`                | The type's declared name.                                                                                                                                                                                                                                                                                  |
 | `equals`               | `(other: #Type) -> bool`     | True iff the two `#Type`s denote the same type.                                                                                                                                                                                                                                                            |
 | `add_member`           | `(name: &[u8], type: #Type)` | Appends a member (struct field or enum variant) of the given name and type.                                                                                                                                                                                                                                |
@@ -563,6 +564,12 @@ A generic function's type parameters are bound at each call site:
    conflicting bindings (`T` unified with both `u32` and `f32`) are too.
 
 A bound type parameter must satisfy its constraint (`<T: Number>`, §5.2).
+A constraint naming a **generic interface** (§5.2) supplies its type
+arguments (`<T, It: Iterator<T>>`); a constraint's arguments may reference
+the type parameters declared **to its left** in the same list, never later
+ones. The bound type must conform to the constraint at exactly that
+instantiation once the call's bindings substitute in (`It: Iterator<T>` with
+`T = u64` accepts a `: Iterator<u64>` conformer, not a `: Iterator<u8>` one).
 During overload resolution (§3.6) a candidate whose unification fails, leaves
 a parameter unbound, or binds a type violating its constraint is simply not
 viable.
@@ -634,6 +641,8 @@ Three operators step outside pointee transparency:
 - **Assigning to a Heap Pointer (`*Type` / `*var Type`) or Dynamically Sized Array (`*[T]`)**: The assignment expression **strictly requires** either the `new` allocation operator or the `move` ownership transfer keyword (e.g., `var p: *i32 = new 5`, `var p2: *i32 = move p`). A bare pointer on the right-hand side would copy the pointee (pointee transparency), never alias the pointer.
 - **Plain `=` rebinds, compound operators reach through:** plain assignment to a pointer- or reference-typed place targets the place itself — it rebinds the pointer or reference under the two restrictions above (dropping what an owning place held, see free-on-reassign below). Compound assignment (`+=`, `<<=`, ...) is an operator and follows pointee transparency: it reads and writes the pointed-at value.
 - **Reference results are borrowed explicitly.** A call whose result is reference-typed (`&T`, `&var T`, `&[T]`) does not flow bare into a **use site** — a binding, an argument, a member initializer, an assignment value, or a `return`/`break`/`yield`. Writing `&f()` keeps the borrow, visibly: unary `&` on an already-reference-typed call result passes the reference through verbatim and is the one exemption from `&`'s addressability requirement. A bare `&T` result at a use site **pierces** — the use consumes a deep copy of the pointee, consistent with pointee transparency on reads. A bare `&[T]` result is a compile-time error, since its pointee `[T]` is unsized: write `&f()` to keep the view or `new f()` to copy it into an owned `*[T]`. Positions that consume the temporary in place — a method receiver (`f().length()`), an index or subslice subject, an operand of `new`, a condition or match subject — take the result directly and need no marker.
+
+- **Using a variable uses the value.** The same rule governs reference-typed **variables** (locals, parameters, fields, elements): a bare use at a use site means the *pointee value*, never the borrow. A bare `&T` variable consumes a **deep copy** of the pointee — so it no longer fits a `&T` parameter; passing the borrow is spelled `&x`. A bare `&[T]` variable is a **compile-time error** at a use site, because its value `[T]` is unsized and `[T]` is not a valid type: `&x` passes the view, `new x` copies the array into an owned `*[T]` (the only way to copy it). An interface-object variable likewise never flows bare — its erased value cannot be copied; write `&x`. Unary `&` on a place already holding a reference or slice yields *that* borrow (`&view` on a `&[u8]` binding is the view itself, not a reference-to-reference). In-place consumers (receivers, index/subslice subjects, conditions, match and `for` subjects) read the variable directly, as always.
 
 #### Slices (`&[T]`) versus Dynamically Sized Heap Arrays (`*[T]`)
 
@@ -707,23 +716,35 @@ The compiler performs a conservative flow analysis over every function body (§ 
 
 #### Loop Semantics (`for` and `while`)
 
-- Loops are completely interface-driven. Any structural data collection or type implementing the `Iterable` interface (a lang item, §5.1a) — such as a fixed array, a slice `&[T]`, or a dynamically sized heap array `*[T]`, all of which implement it implicitly (§5.1) — can be utilized inside a `for` loop statement.
-- **Custom iterables (cursor protocol).** A user type becomes iterable by providing two extension functions; the cursor is a separate value, not part of the container:
+- A `for` subject is either **natively for-compatible** — the built-in array forms (fixed arrays `[T : N]`, slices `&[T]`, heap arrays `*[T]`) and range generators, which lower to counting loops below and take no interface marker — or a **custom iterable**: a type conforming to the `Iterable` interface (a lang item, §5.1a).
+- **Custom iterables (`Iterable` / `Iterator`).** A user type becomes a `for` subject by declaring conformance to `Iterable`, whose `iterator` function yields a separate cursor value conforming to `Iterator` (both generic interfaces, §5.2):
 
   ```alloy
-  // The container yields a fresh cursor by value.
-  fn iterator(self c: &Container) -> SomeIter { ... }
-  // The cursor advances and reports the next element, or None when exhausted.
-  fn next(self it: &var SomeIter) -> Option<T> { ... }
+  // std::iterable (section 5.1a)
+  pub interface Iterator<T> {
+      fn next() -> Option<&T>;
+  }
+  pub interface Iterable<T, It: Iterator<T>> {
+      fn iterator() -> It;
+  }
+
+  // a conforming container binds 'It' to its concrete cursor type
+  type Container : Iterable<T, ContainerCursor> = ...;
+  type ContainerCursor : Iterator<T> = ...;
+  // the container yields a fresh cursor by value
+  fn iterator(self c: &Container) -> ContainerCursor { ... }
+  // the cursor advances and yields a reference to the next element in
+  // place, or None when exhausted
+  fn next(self it: &var ContainerCursor) -> Option<&T> { ... }
   ```
 
-  `for (c) |x| { ... }` lowers to: `it = c.iterator()` then repeatedly `match (it.next()) { Some |x| <body> None { break the loop } }`. The loop variable `x` is bound to the `Option`'s payload type `T`. Built-in arrays/slices/`*[T]` use the faster index-based lowering instead.
+  `for (c) |x| { ... }` lowers to: `it = c.iterator()` then repeatedly `match (it.next()) { Some |x| <body> None { break the loop } }`. The loop variable `x` binds the `Option`'s payload — a `&T` borrowing the element in place; reads copy through it like any reference (§4.2). A cursor-shaped type that does not declare the `Iterable` conformance is not a `for` subject — the marker is required, and the conformance check verifies `iterator`/`next` against the instantiated signatures (§5.2).
 
 - **Counting-loop lowering.** Whenever the subject's iteration count and element access are directly available — every built-in array form (`[T : N]`, `&[T]`, `*[T]`) and every range generator (`[start..end]`, §2.1) — the compiler **must** lower the `for` to a plain counting loop (a C-style `for` over an index), never the cursor protocol. A range generator used as a `for` subject (`for ([..n]) |i| { ... }`) materializes no array at all: it lowers to a counter running from `start` to `end`, which also makes runtime bounds valid in this position without `new`.
 
 - **Multi-subject loops.** A `for` may take several comma-separated subjects, with one capture per subject in order: `for (a, b) |x, y| { ... }`. The subjects iterate in lockstep — each pass binds the next element of every subject — and every subject must itself be iterable. All subjects must produce the same number of elements; a length mismatch is a runtime fault in checked builds.
 
-- **Expression-Only `else` Clause:** The trailing `else` block on a `for` or `while` loop is **only permitted when the entire loop construct is evaluated as an expression** (e.g., when assigning its value to a variable). When an `else` block is supplied, a value expression is explicitly required along all execution paths: the loop body **must** yield a value via an explicit `break value` statement, and the `else` block must evaluate to a value matching that same type. Using an `else` arm on a loop that is executed purely as a statement is a compile-time error.
+- **Expression-Only `else` Clause:** The trailing `else` block on a `for` or `while` loop is **only permitted when the entire loop construct is evaluated as an expression** (e.g., when assigning its value to a variable). When an `else` block is supplied, a value expression is explicitly required along all execution paths: the loop body **must** yield a value via an explicit `yield value` statement, and the `else` block must evaluate to a value matching that same type. Using an `else` arm on a loop that is executed purely as a statement is a compile-time error.
 
 #### Match Expressions
 
@@ -782,9 +803,9 @@ fn add(self v: &Vec3, other: &Vec3) -> Vec3 { ... }
 
 ### 5.1 Arrays & Built-in Methods
 
-All array forms — fixed arrays `[T : N]`, slices `&[T]`, and dynamically sized heap arrays `*[T]` — **implicitly implement the `Iterable` interface** (§5.1a, §5.2). This is the only implicit interface implementation in the language; every other type declares its interfaces explicitly (`type T : I = ...`, §5.2).
+All array forms — fixed arrays `[T : N]`, slices `&[T]`, and dynamically sized heap arrays `*[T]` — are **natively for-compatible** (§4.3): they lower to counting loops and implement **no** interface. There are no implicit interface implementations in the language; every conformance is declared (`type T : I = ...`, §5.2). A generic bound `<C: Iterable<...>>` therefore accepts only declared conformers, never a bare array or slice.
 
-The compiler provides the arrays' `.length() -> u64` implementation directly, because every array form already carries its size — each in a different place:
+The compiler provides the arrays' `.length() -> u64` built-in method directly, because every array form already carries its size — each in a different place:
 
 | Array form        | Where the length lives                                                            |
 | ----------------- | --------------------------------------------------------------------------------- |
@@ -792,7 +813,7 @@ The compiler provides the arrays' `.length() -> u64` implementation directly, be
 | `&[T]` slice      | The `u64` length half of the slice's fat pointer.                                 |
 | `*[T]` heap array | The metadata prefix stored immediately before the pointee (`user_ptr - 8`, §4.2). |
 
-Custom types implement `Iterable` like any other interface and supply `.length()` themselves.
+Custom types wanting a length supply a `length` extension themselves; it is not part of any interface contract (`Iterable` declares only `iterator`, §4.3).
 
 Reinterpretation and conversion are performed by the `as` / `to` cast operators (§3.5), not by built-in methods.
 
@@ -802,8 +823,9 @@ A small set of standard library declarations is **recognized by the compiler by 
 
 | Lang item   | Canonical path            | Declaration                                          | Compiler hook                                                                                                                                                                                                                           |
 | ----------- | ------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Option<T>` | `std::option::Option`     | `enum { Some: T, None }`                             | Cursor protocol: `for` over a custom iterable lowers to repeated `match` on `next()`'s `Option<T>` result (§4.3).                                                                                                                       |
-| `Iterable`  | `std::iterable::Iterable` | Interface: `.length() -> u64` plus iteration support | Drives `for` loops; arrays implement it implicitly (§5.1).                                                                                                                                                                              |
+| `Option<T>` | `std::option::Option`     | `enum { Some: T, None }`                             | Cursor protocol: `for` over a custom iterable lowers to repeated `match` on `next()`'s `Option<&T>` result (§4.3).                                                                                                                      |
+| `Iterable`  | `std::iterable::Iterable` | `interface Iterable<T, It: Iterator<T>> { fn iterator() -> It; }` | Gates `for` over custom types: the subject must declare the conformance (§4.3). Arrays take no marker — they are natively for-compatible (§5.1).                                                                            |
+| `Iterator`  | `std::iterable::Iterator` | `interface Iterator<T> { fn next() -> Option<&T>; }` | The cursor contract behind `for` lowering (§4.3); bound by `Iterable`'s own `It` constraint.                                                                                                                                            |
 | `Number`    | `std::number::Number`     | Interface                                            | Satisfied by the primitive numeric types (§3.1); bounds generic constraints and the `to` conversion cast (§3.5).                                                                                                                        |
 | `arguments` | `std::process::arguments` | `fn arguments() -> &[&[u8]]`                         | The compiler supplies the command line (first element: the program's own path). Natively the entry wrapper captures argc/argv at startup; `alloyc run` serves the arguments after the program path. Unavailable at compile time (§6.2). |
 
@@ -821,14 +843,26 @@ A user definition colliding with an imported lang-item name follows the normal r
 
 ### 5.2 Standard & User-Defined Interfaces
 
-The two standard interfaces are lang items (§5.1a) defined in ordinary standard library source:
+The standard interfaces are lang items (§5.1a) defined in ordinary standard library source:
 
-| Name       | Satisfied by                                                                                                                        |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `Number`   | `u8` `u16` `u32` `u64` `i8` `i16` `i32` `i64` `f32` `f64`                                                                           |
-| `Iterable` | Arrays, slices `&[T]`, and dynamic heap arrays `*[T]` (implicitly, §5.1); custom types providing `.length()` and iteration support. |
+| Name       | Satisfied by                                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `Number`   | `u8` `u16` `u32` `u64` `i8` `i16` `i32` `i64` `f32` `f64`                                                               |
+| `Iterable` | Custom types declaring the conformance and providing `iterator()` (§4.3). Arrays never — they are for-compatible natively (§5.1). |
+| `Iterator` | Cursor types declaring the conformance and providing `next() -> Option<&T>` (§4.3).                                     |
 
 Used as a type-parameter constraint: `fn foo<T: Number>(...)`.
+
+#### Generic Interfaces
+
+An interface may declare its own type parameters (`interface Iterator<T> { fn next() -> Option<&T>; }`), which scope over every declared signature. A parameter may itself be constrained, and a constraint's arguments may reference the parameters declared to its left (`interface Iterable<T, It: Iterator<T>>`, §3.7).
+
+A conformance marker for a generic interface supplies **all** of its type arguments (`type Vector<T> : Iterable<T, VectorCursor<T>>`); the arguments may mention the conforming type's own parameters. Verification (below) substitutes the marker's arguments into the declared signatures — the satisfying extension must match the **instantiated** signature — and each argument must itself satisfy the interface's own constraints at that instantiation.
+
+**Generic interface objects require full instantiation.** A generic interface forms an interface object only with **every** type parameter bound to a concrete type (`&Iterator<u64>`, `&var Iterator<u64>`): the instantiation pins each signature, so one dispatched call site has a fixed ABI even though the concrete implementer behind the pointer is unknown until runtime. There is **no partial erasure** — a bare `&Iterator` is a compile-time error, and a form like `&Iterable<u64>` (with `It` erased) is inexpressible by the arity rule; an erased implementer-chosen type would give each implementer a differently sized result, which the call site cannot receive without an implicit allocation (banned, §4.2). Dispatch identity is **per instantiation**: a generic implementer conforms once per binding of its own parameters (`VectorCursor<u64>` and `VectorCursor<u8>` carry distinct identities behind `Iterator` objects), derived by unifying its conformance marker against the object's arguments. Two consequences:
+
+- **No downcasting.** `is` and `match` on a generic interface object are compile-time errors — runtime identity selects dispatch targets but is not a nameable type test. Dispatch through the interface's functions instead.
+- Inside a generic body a constrained value (`cursor: It` with `It: Iterator<T>`) still resolves its calls **statically** at each instantiation, exactly like any constraint call (role 2 below); the interface object is only for call sites where the concrete type is genuinely unknown at compile time.
 
 #### User-Defined Interfaces
 
@@ -843,7 +877,7 @@ interface Serializable {
 A nominal type alias links itself explicitly to one or more user-defined interfaces using a C++-inspired mapping annotation during its declaration syntax:
 
 ```alloy
-type Packet : Serializable, Iterable = struct {
+type Packet : Serializable, Iterable<u64, PacketCursor> = struct {
     id: u32,
     payload: *[u8],
 }
@@ -853,7 +887,7 @@ type Packet : Serializable, Iterable = struct {
 
 An interface may be used in **two distinct ways**:
 
-1. **Dynamic dispatch.** An interface used as a type — always behind an indirection (`&I`, `&var I`, `*I`, `*var I`) — produces an _interface object_ (§3.2). A value of any concrete type that implements `I` is implicitly convertible to such an interface object. Calling an interface function through an interface object (`handle.do_something()` where `handle: &Shape`) is resolved at **runtime through the vtable** to the concrete type's implementation.
+1. **Dynamic dispatch.** An interface used as a type — always behind an indirection (`&I`, `&var I`, `*I`, `*var I`), with a generic interface fully instantiated (`&Iterator<u64>`, above) — produces an _interface object_ (§3.2). A value of any concrete type that implements `I` (at that instantiation) is implicitly convertible to such an interface object. Calling an interface function through an interface object (`handle.do_something()` where `handle: &Shape`, `it.next()` where `it: &var Iterator<u64>`) is resolved at **runtime through the vtable** to the concrete type's implementation.
 
 2. **Generic constraint.** An interface used as a type-parameter bound (`fn do<T: I>(...)`) restricts the generic to types that implement `I`. The call is resolved **statically** at each instantiation; no vtable is involved. Inside the generic body, a value of type `T` exposes the constraint's interface functions via dot notation; a `T: Number` value additionally supports the arithmetic and comparison operators (§3.1).
 
@@ -879,7 +913,7 @@ fn name(self s: &Shape) -> &[u8] { return "shape" }
 When a type `T` is flagged with interface markers (`type T : I1, I2 = ...`), the compiler performs a static verification pass over the module scope. For every function declared inside each interface (`I1`, `I2`):
 
 1. A satisfying **extension function** (§4.5) must be visible in the module — either an extension belonging to `T` itself, **or** a default implementation (an extension whose `self` receiver is the interface).
-2. The satisfying extension must precisely match the method name, the parameter sequence, and the return type specified by the interface declaration. The parameters following `self` correspond positionally to the interface function's parameter list.
+2. The satisfying extension must precisely match the method name, the parameter sequence, and the return type specified by the interface declaration — with a generic interface's marker arguments substituted into the declared signature first, and the candidate's own type parameters bound through its receiver (`fn next<E>(self c: &var Cursor<E>)` verifies against `Cursor<T>` with `E = T`). The parameters following `self` correspond positionally to the interface function's parameter list.
 3. The receiver indirection of the satisfying extension's first parameter (`self: &T`, `self: *var T`, etc.) dictates what memory state or qualifier context is permitted when invoking that interface function polymorphically.
 4. If neither a type-specific extension nor a default implementation is visible, verification fails with a compile-time error.
 

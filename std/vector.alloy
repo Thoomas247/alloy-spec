@@ -14,7 +14,7 @@
 import std::option;
 import std::iterable;
 
-pub type Vector<T> : Iterable = struct {
+pub type Vector<T> : Iterable<T, VectorCursor<T>> = struct {
     storage: Option<*var [T]>,
     count: u64,
 };
@@ -24,7 +24,7 @@ pub fn Vector::empty<T>() -> Vector<T> {
     return Vector { .storage = ::None, .count = 0 };
 }
 
-// The number of elements in use (the Iterable requirement).
+// The number of elements in use.
 pub fn length<T>(self vector: &Vector<T>) -> u64 {
     return vector.count;
 }
@@ -100,7 +100,7 @@ fn capacity<T>(self vector: &Vector<T>) -> u64 {
 
 // The cursor behind 'for (vector) |element|' (section 4.3): it borrows
 // the vector and hands out references to the elements in place.
-pub type VectorCursor<T> = struct {
+pub type VectorCursor<T> : Iterator<T> = struct {
     subject: &Vector<T>,
     index: u64,
 };

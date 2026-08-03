@@ -9,7 +9,7 @@
 import std::option;
 import std::iterable;
 
-pub type String : Iterable = struct {
+pub type String : Iterable<u8, StringCursor> = struct {
     storage: Option<*var [u8]>,
     count: u64,
 };
@@ -22,7 +22,7 @@ pub fn String::empty() -> String {
 // An owned copy of the given text.
 pub fn String::from(text: &[u8]) -> String {
     var result = String::empty();
-    result.append(text);
+    result.append(&text);
     return result;
 }
 
@@ -33,9 +33,28 @@ pub fn String::with_capacity(size: u64) -> String {
     return str;
 }
 
-// The number of bytes in use (the Iterable requirement).
+// The number of bytes in use.
 pub fn length(self string: &String) -> u64 {
     return string.count;
+}
+
+// The cursor behind 'for (string) |byte|' (section 4.3): it borrows the
+// contents once and hands out references to the bytes in place.
+pub type StringCursor : Iterator<u8> = struct {
+    bytes: &[u8],
+    index: u64,
+};
+
+pub fn iterator(self string: &String) -> StringCursor {
+    return StringCursor { .bytes = &string.view(), .index = 0 };
+}
+
+pub fn next(self cursor: &var StringCursor) -> Option<&u8> {
+    if (cursor.index >= cursor.bytes.length()) {
+        return ::None;
+    }
+    cursor.index += 1;
+    return ::Some(&cursor.bytes[cursor.index - 1]);
 }
 
 // Borrows the contents in place. The view is invalidated by the next
@@ -90,7 +109,7 @@ pub fn clear(self string: &var String) {
 
 // True when the contents equal the given text byte for byte.
 pub fn equals(self string: &String, text: &[u8]) -> bool {
-    return text_equals(&string.view(), text);
+    return text_equals(&string.view(), &text);
 }
 
 // True when two byte sequences match exactly.

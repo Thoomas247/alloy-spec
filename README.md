@@ -15,6 +15,4 @@ compiler.
 
 The packaged `bin/alloyc.exe` resolves `std::` imports through the search
 order of specification section 5.4 (the current directory, the compiler
-executable's directory, then `$ALLOY_STDLIB`). The standard library lives at
-the repository root rather than next to the executable, so run it from this
-directory or with `ALLOY_STDLIB` pointing here.
+executable's directory, then `$ALLOY_STDLIB`).

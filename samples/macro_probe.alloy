@@ -38,7 +38,7 @@ type Header = #widthOf(false);
 
 fn main() -> i32 {
     const tag = #label("packet v1");
-    printf("%s\n", tag);
+    printf("%s\n", &tag);
 
     const is_struct = #(#Packet.is_struct());
     const member_count = #(#Packet.member_names().length());

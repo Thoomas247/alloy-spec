@@ -21,30 +21,30 @@ extern __acrt_iob_func(index: u32) -> i64;
 
 // Writes the text to standard output.
 pub fn print(text: &[u8]) {
-    fwrite(text, 1, text.length(), __acrt_iob_func(1));
+    fwrite(&text, 1, text.length(), __acrt_iob_func(1));
 }
 
 // Writes the text and a newline to standard output.
 pub fn print_line(text: &[u8]) {
-    print(text);
+    print(&text);
     print("\n");
 }
 
 // Writes the text to standard error.
 pub fn print_error(text: &[u8]) {
-    fwrite(text, 1, text.length(), __acrt_iob_func(2));
+    fwrite(&text, 1, text.length(), __acrt_iob_func(2));
 }
 
 // Writes the text and a newline to standard error.
 pub fn print_error_line(text: &[u8]) {
-    print_error(text);
+    print_error(&text);
     print_error("\n");
 }
 
 // Reads a whole file into an owned byte array, or 'None' when the file
 // cannot be opened.
 pub fn read_file(path: &[u8]) -> Option<*[u8]> {
-    const terminated = null_terminated(path);
+    const terminated = null_terminated(&path);
     const stream = fopen(&terminated, "rb");
     if (stream == 0) {
         return ::None;
@@ -66,12 +66,12 @@ pub fn read_file(path: &[u8]) -> Option<*[u8]> {
 // Writes the bytes to the file, replacing any previous contents. False
 // when the file cannot be created.
 pub fn write_file(path: &[u8], contents: &[u8]) -> bool {
-    const terminated = null_terminated(path);
+    const terminated = null_terminated(&path);
     const stream = fopen(&terminated, "wb");
     if (stream == 0) {
         return false;
     }
-    fwrite(contents, 1, contents.length(), stream);
+    fwrite(&contents, 1, contents.length(), stream);
     fclose(stream);
     return true;
 }
