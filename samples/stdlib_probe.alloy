@@ -19,6 +19,14 @@ fn main() -> i64 {
         total += value;
     }
 
+    // 'view' borrows the elements in place as a plain slice; an untouched
+    // vector views as the empty slice '[]'
+    const window = &numbers.view();
+    total += window[1];
+    var untouched: Vector<i64> = Vector::empty<i64>();
+    const nothing = &untouched.view();
+    total += nothing.length() to i64;
+
     var report = String::empty();
     report.append("total=");
     report.append_integer(total);
@@ -34,7 +42,7 @@ fn main() -> i64 {
 
     write_file("stdlib_probe_scratch.txt", &report.view());
     const loaded = read_file("stdlib_probe_scratch.txt");
-    if (loaded is ::Some) |contents: &| {
+    if (loaded is ::Some |contents: &|) {
         if (text_equals(&contents, &report.view())) {
             print_line("round trip ok");
         } else {

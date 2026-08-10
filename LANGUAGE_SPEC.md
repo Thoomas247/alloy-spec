@@ -20,7 +20,7 @@ Source files are encoded in **UTF-8**. Identifiers and literal strings fully sup
 ### 1.2 Whitespace & Comments
 
 ```
-whitespace     ::= ' ' | '\t' | '\n' | '\r' | '\v' | '\f'
+whitespace     ::= ' ' | '\t' | '\n' | '\r'
 line_comment   ::= '//' <any char except '\n'>*
 block_comment  ::= '/*' ( block_comment | <any sequence not containing '/*' or '*/'> )* '*/'
 ```
@@ -89,7 +89,7 @@ octal_literal    ::= '0o' [0-7]+
 float_literal    ::= [0-9]+ '.' [0-9]*
 string_literal   ::= '"' ( escape_seq | <any char except '"' or '\n'> )* '"'
 char_literal     ::= '\'' ( escape_seq | <any char except '\'' or '\n'> )+ '\''
-escape_seq       ::= '\\' [nrt0\\'"xXuU] | '\\x' digit{2} | '\\u{' digit+ '}'
+escape_seq       ::= '\\' [nrt0\\'"] | '\\x' hex_digit{2} | '\\u{' hex_digit+ '}'
 ```
 
 Integer literals support standard **decimal**, **hexadecimal** (`0x`), **binary** (`0b`), and **octal** (`0o`) radix representations.
@@ -198,7 +198,7 @@ assign_op       = "=" | "+=" | "-=" | "*=" | "/=" | "%="
 (* Expressions *)
 expression      = cast_expr [ binary_op expression ] ;
 
-cast_expr       = unary_expr { "is" ( implied_variant | named_type ) | "as" type | "to" type } ;
+cast_expr       = unary_expr { "is" ( implied_variant | named_type ) [ "|" capture "|" ] | "as" type | "to" type } ;
 
 unary_expr      = unary_op unary_expr | postfix_expr ;
 unary_op        = "-" | "~" | "!" | "&" | "new" | "move" ;
@@ -230,19 +230,18 @@ identifier_expr   = ident { "::" ident } ;
 implied_variant   = "::" ident ;
 literal           = integer_literal | float_literal | string_literal | char_literal | "true" | "false" ;
 
-array_literal     = "[" expression { "," expression } "]" ;
+array_literal     = "[" [ expression { "," expression } ] "]" ;
 array_fill        = "[" expression ":" expression "]" ;
 array_range       = "[" [ expression ] ".." expression "]" ;
 
-named_struct_init = ident { "::" ident } "{" [ member_init { "," member_init } ] "}" ;
+named_struct_init = ident { "::" ident } [ "<" type { "," type } ">" ] "{" [ member_init { "," member_init } ] "}" ;
 anon_struct_init  = "{" [ member_init { "," member_init } ] "}" ;
 member_init       = "." ident "=" expression ;
 
 lambda_expr       = [ "|" capture { "," capture } "|" ] function ;
 capture           = ident [ ":" ( type | type_modifier ) ] ;
 
-if_expr     = "if" "(" expression ")" [ "|" capture "|" ]
-              statement [ "else" statement ] ;
+if_expr     = "if" "(" expression ")" statement [ "else" statement ] ;
 
 for_expr    = "for" "(" expression { "," expression } ")"
               [ "|" capture { "," capture } "|" ]
@@ -275,6 +274,13 @@ the fill produces a stack-allocated fixed array (`[T : N]`), the count must be
 compile-time evaluatable — verified by a later compilation stage, not by the
 grammar. A runtime count is valid only for heap allocation (`new [value : count]`,
 §4.2).
+
+**Empty array literal.** `[]` is the array literal of length zero: the
+canonical empty view (null data pointer, zero length — safe because a
+zero-length view is never dereferenced). It has no elements to infer from, so
+it is only valid **where a slice `&[T]` is expected**, adopting that element
+type; fixed arrays keep their at-least-one-element rule, and `[]` anywhere
+without a slice-typed context is a compile-time error.
 
 **Range generators.** `[start..end]` generates the array of consecutive
 integers from `start` (inclusive) to `end` (exclusive): `[0..5]` is
@@ -316,8 +322,9 @@ reference to it":
   the subject must be mutable.
 
 This is the only capture syntax, and it is identical at every capture site —
-lambda capture lists, `if` / `is`, `for`, and `match` arms. A modifier written
-**before** the name (`|&var x|`) is not valid Alloy.
+lambda capture lists, inline `is` tests (`x is ::Some |v|`, §3.2), `for`, and
+`match` arms. A modifier written **before** the name (`|&var x|`) is not
+valid Alloy.
 
 Interface-object captures are the exception to the copy default: they always
 bind by reference, mirroring the subject's indirection (§3.2).
@@ -378,9 +385,9 @@ Boolean literals are explicitly reserved via the language keywords `true` and `f
 | `*var T`                       | Mutable pointer         | Managed mutable heap-allocated instance                                    |
 | `&T`                           | Immutable reference     | Unmanaged borrowed reference                                               |
 | `&var T`                       | Mutable reference       | Unmanaged mutable borrowed reference                                       |
-| `&I` / `*I` (`I` an interface) | Interface object        | Dynamic-dispatch fat pointer: a data pointer plus a vtable pointer (§5.2). |
+| `&I` / `*I` (`I` an interface) | Interface object        | Dynamic-dispatch fat pointer: a data pointer plus the concrete type's identity (§5.2). |
 
-An **interface used as a type** (only behind an indirection — `&I`, `&var I`, `*I`, `*var I`) is an _interface object_: a fat pointer carrying the address of a value together with the vtable of the concrete type's interface implementation. A value of concrete type `T` is implicitly convertible to an interface object of `I` if and only if `T` declares `I` among its interface markers (`type T : I = ...`). The reverse conversion (interface object down to a concrete type) is expressed through the same constructs used for enum discrimination:
+An **interface used as a type** (only behind an indirection — `&I`, `&var I`, `*I`, `*var I`) is an _interface object_: a fat pointer carrying the address of a value together with the **identity of its concrete type**; calls through it dispatch at runtime to that type's implementations (§5.2). A value of concrete type `T` is implicitly convertible to an interface object of `I` if and only if `T` declares `I` among its interface markers (`type T : I = ...`). The reverse conversion (interface object down to a concrete type) is expressed through the same constructs used for enum discrimination:
 
 - **Exhaustive (`match`).** A `match` whose subject is an interface object accepts concrete-type names as arm patterns, with a payload capture that binds a reference to the concrete value:
 
@@ -394,13 +401,24 @@ match (shape) {            // shape: &Shape
 
 The capture's indirection mirrors the subject's: a `&Shape` subject yields `&Concrete` captures, a `&var Shape` subject yields `&var Concrete` captures, and similarly for `*` / `*var`.
 
-- **Non-exhaustive (`if (… is Type)`).** The new `is` keyword tests whether an interface object's concrete type matches a target type, and — when paired with a typed capture — also produces the downcasted reference:
+- **Non-exhaustive (`x is Type |c|`).** The `is` keyword tests whether an interface object's concrete type matches a target type, and — with an optional capture clause attached directly to the test — also produces the downcasted reference:
 
 ```alloy
-if (shape is Circle) |c| { /* c: &Circle, only runs when shape's concrete is Circle */ }
+if (shape is Circle |c|) { /* c: &Circle, only runs when shape's concrete is Circle */ }
 ```
 
-`shape is Type` is a boolean expression in its own right; the `|c|` capture is optional. The `is` operator accepts two kinds of left operand:
+`x is Type` is a boolean expression in its own right, and the `|c|` capture attaches **inline to the `is` test itself**. A capture is only permitted where its success dominates every use: on a direct `&&` conjunct of an `if` or `while` condition. Each conjunct may carry its own capture, and each binding is visible to the conjuncts after it and to the branch body — several variables can be captured in one condition:
+
+```alloy
+if (cursor.peek() is ::Some |first| && first == '/' && cursor.peek(1) is ::Some |second|) {
+    // first and second both bound here
+}
+while (cursor.next() is ::Some |token|) { /* token re-binds each iteration */ }
+```
+
+A capture under `||`, under `!`, or outside an `if`/`while` condition is a compile-time error (a failed test could still reach the capture's uses). In a `while`, the captures re-bind on every iteration and scope over the body; in an `if` they scope over the then-branch only — never the `else`.
+
+The `is` operator accepts two kinds of left operand:
 
 1. **Interface object** — the right operand is a concrete type implementing the same interface, and the capture binds the downcasted value (above).
 2. **Enum value** — the right operand is a variant of that enum's type, and `is` evaluates whether the enum currently holds that variant. The capture then binds the variant's **payload**, and is only permitted on variants that carry one:
@@ -413,10 +431,10 @@ type SomeEnum = enum {
 
 var val: SomeEnum = SomeEnum::ValueA(t)
 
-if (val is SomeEnum::ValueA) |a: &T| { }   // a borrows the payload in place
-if (val is SomeEnum::ValueA) |a: &| { }    // same, payload type inferred
-if (val is SomeEnum::ValueA) |a: T| { }    // a is a copy, type stated
-if (val is SomeEnum::ValueA) |a| { }       // a is a copy (default)
+if (val is SomeEnum::ValueA |a: &T|) { }   // a borrows the payload in place
+if (val is SomeEnum::ValueA |a: &|) { }    // same, payload type inferred
+if (val is SomeEnum::ValueA |a: T|) { }    // a is a copy, type stated
+if (val is SomeEnum::ValueA |a|) { }       // a is a copy (default)
 ```
 
 Capture binding follows the capture-typing rules (§2.1): a deep copy by default, a borrow when annotated with a reference modifier (`&` / `&var`). An owning capture (`*` / `*var`) takes the payload **out** of the enum:
@@ -429,13 +447,13 @@ type Holder = enum {
 
 var h: Holder = Holder::Boxed(new T {})
 
-if (h is Holder::Boxed) |p: *| {
+if (h is Holder::Boxed |p: *|) {
     // p owns the payload allocation
 }
 // h is invalid (moved-from) after the if, whether or not the branch ran
 ```
 
-When the branch is taken, ownership of the payload transfers into the capture, the remainder of the enum value is dropped, and the subject binding is cleared — exactly like `move` (§4.2). When the branch is not taken, the subject value is reclaimed by its normal scope-end drop. In both cases the subject binding is treated as **moved-from after the `if`**; using it again is a use-after-move error. Owning captures are only valid when the payload type is itself a pointer (`*T` / `*var T` / `*[T]`) — only pointers are movable (§4.2) — and `&var` / `*` / `*var` captures all require the subject to be mutable.
+When the test matches, ownership of the payload transfers into the capture, the remainder of the enum value is dropped, and the subject binding is cleared — exactly like `move` (§4.2). When it does not, the subject value is reclaimed by its normal scope-end drop. In both cases the subject binding is treated as **moved-from after the construct**; using it again is a use-after-move error. Owning captures are only valid when the payload type is itself a pointer (`*T` / `*var T` / `*[T]`) — only pointers are movable (§4.2) — and `&var` / `*` / `*var` captures all require the subject to be mutable.
 
 #### Implied enum variants (`::Variant`)
 
@@ -452,7 +470,7 @@ match (state) {
     ::Idle { }                        // context: the match subject
     ::Busy |load| { }
 }
-if (state is ::Busy) |load| { }       // context: the 'is' subject
+if (state is ::Busy |load|) { }       // context: the 'is' subject
 ```
 
 Generic enums infer their type parameters through the same unification as named construction (§3.7).
@@ -464,7 +482,7 @@ Generic enums infer their type parameters through the same unification as named 
 3. **Untyped float literal** — compatible with any float primitive (`f32`, `f64`). Resolves to `f32` when no contextual type is available.
 4. **Named alias transparency** — a named type is compatible with anything its underlying type is compatible with.
 5. **Numeric widening** — a numeric primitive is implicitly compatible with a wider primitive of the **same sign class**: unsigned→unsigned, signed→signed, float→float (`f32`→`f64` is implicit; the reverse requires `to`). Cross-class conversions require an explicit conversion cast (`x to T`, §3.5).
-6. **Chained Nominal-Structural struct compatibility** — Two named struct types are fundamentally distinct (**nominal compatibility**). However, type-chaining logic allows implicit casting from more specific (narrower) to more general types layout-wise. A target expecting an anonymous layout (e.g., `struct { a: u8, b: f32 }`) will accept _any_ value—named or anonymous—whose internal shape structurally provides a matching set of required fields. Implicit casting up the chain to a more "general" layout is legal at any recursive depth level. Conversely, converting from a general, structurally loose layout down to a narrower/more specific named type requires an explicit reinterpretation cast (`x as NarrowType`, §3.5).
+6. **Structural struct compatibility** — Two named struct types are nominally distinct. A target expecting an **anonymous** structural layout (`struct { a: u8, b: f32 }`) accepts any value — named or anonymous — whose field list matches **exactly**: the same field names and types, in the same order (recursively, so nested structural layouts compare the same way). There is no width subtyping — extra or missing fields never coerce. Converting between distinct **named** types of equal layout is the reinterpretation cast's job (`x as T`, §3.5).
 7. **Structural enum compatibility** — an inline `enum { ... }` type is compatible with any enum type — named or inline — whose **ordered variant list matches exactly**: same variant names in the same order, with identical payload types. Two distinct _named_ enums remain nominally distinct even when their shapes match; the structural rule applies only when at least one side is an inline enum type.
 
 Inline `struct { ... }` and `enum { ... }` types are permitted **wherever a type is expected**: parameter and return types, variable annotations, struct fields, enum payloads, generic arguments, and array elements. Values of an inline enum type are constructed with the implied-variant syntax (`::Variant`, §3.2), since the type has no name to qualify with.
@@ -489,19 +507,19 @@ Inline `struct { ... }` and `enum { ... }` types are permitted **wherever a type
 
 All are evaluated at compile time and called with dot syntax on a `#Type` value.
 
-| Method                 | Signature                    | Semantics                                                                                                                                                                                                                                                                                                  |
-| ---------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `is_struct`            | `() -> bool`                 | True iff the type is a struct.                                                                                                                                                                                                                                                                             |
-| `is_enum`              | `() -> bool`                 | True iff the type is an enum.                                                                                                                                                                                                                                                                              |
-| `is_primitive`         | `() -> bool`                 | True iff the type is a built-in primitive.                                                                                                                                                                                                                                                                 |
-| `is_interface`         | `() -> bool`                 | True iff the type is an interface.                                                                                                                                                                                                                                                                         |
+| Method                 | Signature                    | Semantics                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `is_struct`            | `() -> bool`                 | True iff the type is a struct.                                                                                                                                                                                                                                                                                                                                                                   |
+| `is_enum`              | `() -> bool`                 | True iff the type is an enum.                                                                                                                                                                                                                                                                                                                                                                    |
+| `is_primitive`         | `() -> bool`                 | True iff the type is a built-in primitive.                                                                                                                                                                                                                                                                                                                                                       |
+| `is_interface`         | `() -> bool`                 | True iff the type is an interface.                                                                                                                                                                                                                                                                                                                                                               |
 | `implements_interface` | `(other: #Type) -> bool`     | True iff this type implements `other` (an interface), by the same conformance rule as §5.2 — declared markers resolved by definition identity (same-named interfaces from different libraries never confuse it) plus `Number` lang-item conformance for the primitives. A generic interface matches by definition, ignoring its instantiation arguments. Synthesised `#Type`s implement nothing. |
-| `name`                 | `() -> &[u8]`                | The type's declared name.                                                                                                                                                                                                                                                                                  |
-| `equals`               | `(other: #Type) -> bool`     | True iff the two `#Type`s denote the same type.                                                                                                                                                                                                                                                            |
-| `add_member`           | `(name: &[u8], type: #Type)` | Appends a member (struct field or enum variant) of the given name and type.                                                                                                                                                                                                                                |
-| `remove_member`        | `(name: &[u8])`              | Removes the member with the given name.                                                                                                                                                                                                                                                                    |
-| `member_names`         | `() -> &[&[u8]]`             | Member names, in declaration order.                                                                                                                                                                                                                                                                        |
-| `member_types`         | `() -> &[#Type]`             | Member types, parallel to `member_names()`.                                                                                                                                                                                                                                                                |
+| `name`                 | `() -> &[u8]`                | The type's declared name.                                                                                                                                                                                                                                                                                                                                                                        |
+| `equals`               | `(other: #Type) -> bool`     | True iff the two `#Type`s denote the same type.                                                                                                                                                                                                                                                                                                                                                  |
+| `add_member`           | `(name: &[u8], type: #Type)` | Appends a member (struct field or enum variant) of the given name and type.                                                                                                                                                                                                                                                                                                                      |
+| `remove_member`        | `(name: &[u8])`              | Removes the member with the given name.                                                                                                                                                                                                                                                                                                                                                          |
+| `member_names`         | `() -> &[&[u8]]`             | Member names, in declaration order.                                                                                                                                                                                                                                                                                                                                                              |
+| `member_types`         | `() -> &[#Type]`             | Member types, parallel to `member_names()`.                                                                                                                                                                                                                                                                                                                                                      |
 
 A `#Type` is a **value**: `add_member` / `remove_member` mutate the `#Type` value in hand, not the original type it was reflected from. The final `#Type` value, assigned through `type T = <#Type-valued comptime expression>`, becomes the synthesised type `T`. A synthesised struct behaves as a structural layout (§3.3 rule 6); a synthesised enum behaves as an inline enum type (§3.3 rule 7), and its variants are constructed, matched, and tested through the alias name (`T::Variant`) like any declared enum.
 
@@ -516,7 +534,7 @@ Two explicit cast operators cover every cast the coercion rules (§3.3) do not p
 
 - `as` requires the source and target layouts to have the same byte width, computed by the §3.9 layout rules for every type. Applied to a reference (`&S`), it yields a reference (`&T`) viewing the same memory without copying; the width requirement then applies to the pointee layouts `S` and `T`, not to the references themselves.
 - `to` is defined for `Number` types (§5.2) and follows standard numeric conversion semantics (truncation, sign conversion, float/integer rounding).
-- `is` (§3.2) belongs to the same grammar family but is a runtime type test on interface objects, yielding `bool`.
+- `is` (§3.2) belongs to the same grammar family but is a runtime test — of an enum's current variant or an interface object's concrete type — yielding `bool` and optionally binding an inline capture.
 
 ```alloy
 var raw: u32 = 0x3F800000
@@ -582,6 +600,15 @@ compile-time error (`cannot infer type parameter 'T'`). A generic variant
 construction passed as a call argument takes its context from each overload
 candidate's parameter type (§3.6), the same way implied variants do (§3.2).
 
+A **struct literal** binds a generic type's parameters either from the
+contextual expected type (`var v: Vector<u8> = Vector { ... }`) or
+**explicitly, like a generic call**: `Vector<u8> { ... }` names the
+instantiation before the braces (`named_struct_init`, §2.1). Explicit
+arguments bind all parameters left-to-right and must match the type's
+parameter count; they are the way to construct a generic value where no
+context exists (`var v = Vector<T> { ... }` inside a generic body). A bare
+generic literal with neither source is a compile-time error.
+
 ### 3.8 Mutability
 
 Bindings are immutable by default and mutability is explicit:
@@ -642,7 +669,7 @@ Three operators step outside pointee transparency:
 - **Plain `=` rebinds, compound operators reach through:** plain assignment to a pointer- or reference-typed place targets the place itself — it rebinds the pointer or reference under the two restrictions above (dropping what an owning place held, see free-on-reassign below). Compound assignment (`+=`, `<<=`, ...) is an operator and follows pointee transparency: it reads and writes the pointed-at value.
 - **Reference results are borrowed explicitly.** A call whose result is reference-typed (`&T`, `&var T`, `&[T]`) does not flow bare into a **use site** — a binding, an argument, a member initializer, an assignment value, or a `return`/`break`/`yield`. Writing `&f()` keeps the borrow, visibly: unary `&` on an already-reference-typed call result passes the reference through verbatim and is the one exemption from `&`'s addressability requirement. A bare `&T` result at a use site **pierces** — the use consumes a deep copy of the pointee, consistent with pointee transparency on reads. A bare `&[T]` result is a compile-time error, since its pointee `[T]` is unsized: write `&f()` to keep the view or `new f()` to copy it into an owned `*[T]`. Positions that consume the temporary in place — a method receiver (`f().length()`), an index or subslice subject, an operand of `new`, a condition or match subject — take the result directly and need no marker.
 
-- **Using a variable uses the value.** The same rule governs reference-typed **variables** (locals, parameters, fields, elements): a bare use at a use site means the *pointee value*, never the borrow. A bare `&T` variable consumes a **deep copy** of the pointee — so it no longer fits a `&T` parameter; passing the borrow is spelled `&x`. A bare `&[T]` variable is a **compile-time error** at a use site, because its value `[T]` is unsized and `[T]` is not a valid type: `&x` passes the view, `new x` copies the array into an owned `*[T]` (the only way to copy it). An interface-object variable likewise never flows bare — its erased value cannot be copied; write `&x`. Unary `&` on a place already holding a reference or slice yields *that* borrow (`&view` on a `&[u8]` binding is the view itself, not a reference-to-reference). In-place consumers (receivers, index/subslice subjects, conditions, match and `for` subjects) read the variable directly, as always.
+- **Using a variable uses the value.** The same rule governs reference-typed **variables** (locals, parameters, fields, elements): a bare use at a use site means the _pointee value_, never the borrow. A bare `&T` variable consumes a **deep copy** of the pointee — so it no longer fits a `&T` parameter; passing the borrow is spelled `&x`. A bare `&[T]` variable is a **compile-time error** at a use site, because its value `[T]` is unsized and `[T]` is not a valid type: `&x` passes the view, `new x` copies the array into an owned `*[T]` (the only way to copy it). An interface-object variable likewise never flows bare — its erased value cannot be copied; write `&x`. Unary `&` on a place already holding a reference or slice yields _that_ borrow (`&view` on a `&[u8]` binding is the view itself, not a reference-to-reference). In-place consumers (receivers, index/subslice subjects, conditions, match and `for` subjects) read the variable directly, as always.
 
 #### Slices (`&[T]`) versus Dynamically Sized Heap Arrays (`*[T]`)
 
@@ -760,7 +787,7 @@ var x = match (subject) {
 
 - **Subject Versatility:** The subject of a `match` statement can evaluate to an enum variant, a numeric primitive, a character literal, or a string literal (treated natively as an array of integral numbers). Enum arm patterns name variants either fully (`State::Idle`) or in the implied form (`::Idle`, §3.2); a bare variant name is invalid.
 - **Pattern Captures:** The pattern capture clause (`|capture|`) is **exclusively valid** when matching enum variants containing attached data payloads. Utilizing a pattern capture when matching numbers, characters, or strings results in a compile-time error. Captures follow the capture-typing rules (§2.1): deep copy by default, optionally annotated (`|a: &|` borrows the payload in place; an owning capture `|a: *|` takes a pointer payload out, leaving the match subject moved-from after the `match`).
-- **Exhaustiveness:** Every `match` must cover all possible subject values, in statement and expression position alike. An enum subject is exhaustive when every variant appears as an arm pattern, or when an internal `else` arm is present. All other subjects — numbers, characters, strings, and interface objects — have open or unbounded domains and therefore always require an internal `else` arm. A non-exhaustive `match` is a compile-time error. (The external `else` block below is not a coverage fallback: it handles an arm completing without `yield`, not an unmatched subject.)
+- **Exhaustiveness:** Only a `match` evaluated **as an expression** must cover all possible subject values — the construct must produce a value, so no subject may slip through. An enum subject is exhaustive when every variant appears as an arm pattern, or when an internal `else` arm is present. All other subjects — numbers, characters, strings, and interface objects — have open or unbounded domains and therefore always require an internal `else` arm in expression position. A non-exhaustive value-yielding `match` is a compile-time error. A `match` in **statement position** carries no such requirement: it may cover any subset of the subject's values, and when no arm matches, the statement simply does nothing. (The external `else` block below is not a coverage fallback: it handles an arm completing without `yield`, not an unmatched subject.)
 - **Match Evaluation & Value Yielding:** Distinct match arms yield an evaluated value from the outer `match` expression block by terminating via a `yield value` statement. A `break` inside a match arm targets the enclosing loop (§4.3 `break`), never the match.
 - **Expression-Only External Match `else` Block:** A `match` structure supports an optional **external `else` block** positioned after its closing bracket. This block is **only permitted when the match is evaluated as an expression**. It executes if and only if the selected match arm completes its execution path normally **without producing a value via a `yield` statement**. Because it is constrained to expression contexts, the external `else` block must also provide a final value matching the expression's expected return type. Appending an external `else` block to a `match` construct used purely as a statement is a compile-time error.
 
@@ -821,13 +848,13 @@ Reinterpretation and conversion are performed by the `as` / `to` cast operators 
 
 A small set of standard library declarations is **recognized by the compiler by canonical path** to power syntactic sugar. There is **no prelude**: lang items are ordinary Alloy source shipped with the standard library (§5.4), and nothing is in scope until imported. The compiler's own lowering references the canonical declaration directly — an import is only required to _name_ the item in source code.
 
-| Lang item   | Canonical path            | Declaration                                          | Compiler hook                                                                                                                                                                                                                           |
-| ----------- | ------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Option<T>` | `std::option::Option`     | `enum { Some: T, None }`                             | Cursor protocol: `for` over a custom iterable lowers to repeated `match` on `next()`'s `Option<&T>` result (§4.3).                                                                                                                      |
-| `Iterable`  | `std::iterable::Iterable` | `interface Iterable<T, It: Iterator<T>> { fn iterator() -> It; }` | Gates `for` over custom types: the subject must declare the conformance (§4.3). Arrays take no marker — they are natively for-compatible (§5.1).                                                                            |
-| `Iterator`  | `std::iterable::Iterator` | `interface Iterator<T> { fn next() -> Option<&T>; }` | The cursor contract behind `for` lowering (§4.3); bound by `Iterable`'s own `It` constraint.                                                                                                                                            |
-| `Number`    | `std::number::Number`     | Interface                                            | Satisfied by the primitive numeric types (§3.1); bounds generic constraints and the `to` conversion cast (§3.5).                                                                                                                        |
-| `arguments` | `std::process::arguments` | `fn arguments() -> &[&[u8]]`                         | The compiler supplies the command line (first element: the program's own path). Natively the entry wrapper captures argc/argv at startup; `alloyc run` serves the arguments after the program path. Unavailable at compile time (§6.2). |
+| Lang item   | Canonical path            | Declaration                                                       | Compiler hook                                                                                                                                                                                                                           |
+| ----------- | ------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Option<T>` | `std::option::Option`     | `enum { Some: T, None }`                                          | Cursor protocol: `for` over a custom iterable lowers to repeated `match` on `next()`'s `Option<&T>` result (§4.3).                                                                                                                      |
+| `Iterable`  | `std::iterable::Iterable` | `interface Iterable<T, It: Iterator<T>> { fn iterator() -> It; }` | Gates `for` over custom types: the subject must declare the conformance (§4.3). Arrays take no marker — they are natively for-compatible (§5.1).                                                                                        |
+| `Iterator`  | `std::iterable::Iterator` | `interface Iterator<T> { fn next() -> Option<&T>; }`              | The cursor contract behind `for` lowering (§4.3); bound by `Iterable`'s own `It` constraint.                                                                                                                                            |
+| `Number`    | `std::number::Number`     | Interface                                                         | Satisfied by the primitive numeric types (§3.1); bounds generic constraints and the `to` conversion cast (§3.5).                                                                                                                        |
+| `arguments` | `std::process::arguments` | `fn arguments() -> &[&[u8]]`                                      | The compiler supplies the command line (first element: the program's own path). Natively the entry wrapper captures argc/argv at startup; `alloyc run` serves the arguments after the program path. Unavailable at compile time (§6.2). |
 
 ```alloy
 import std::option
@@ -845,11 +872,11 @@ A user definition colliding with an imported lang-item name follows the normal r
 
 The standard interfaces are lang items (§5.1a) defined in ordinary standard library source:
 
-| Name       | Satisfied by                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `Number`   | `u8` `u16` `u32` `u64` `i8` `i16` `i32` `i64` `f32` `f64`                                                               |
+| Name       | Satisfied by                                                                                                                      |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Number`   | `u8` `u16` `u32` `u64` `i8` `i16` `i32` `i64` `f32` `f64`                                                                         |
 | `Iterable` | Custom types declaring the conformance and providing `iterator()` (§4.3). Arrays never — they are for-compatible natively (§5.1). |
-| `Iterator` | Cursor types declaring the conformance and providing `next() -> Option<&T>` (§4.3).                                     |
+| `Iterator` | Cursor types declaring the conformance and providing `next() -> Option<&T>` (§4.3).                                               |
 
 Used as a type-parameter constraint: `fn foo<T: Number>(...)`.
 
@@ -887,7 +914,7 @@ type Packet : Serializable, Iterable<u64, PacketCursor> = struct {
 
 An interface may be used in **two distinct ways**:
 
-1. **Dynamic dispatch.** An interface used as a type — always behind an indirection (`&I`, `&var I`, `*I`, `*var I`), with a generic interface fully instantiated (`&Iterator<u64>`, above) — produces an _interface object_ (§3.2). A value of any concrete type that implements `I` (at that instantiation) is implicitly convertible to such an interface object. Calling an interface function through an interface object (`handle.do_something()` where `handle: &Shape`, `it.next()` where `it: &var Iterator<u64>`) is resolved at **runtime through the vtable** to the concrete type's implementation.
+1. **Dynamic dispatch.** An interface used as a type — always behind an indirection (`&I`, `&var I`, `*I`, `*var I`), with a generic interface fully instantiated (`&Iterator<u64>`, above) — produces an _interface object_ (§3.2). A value of any concrete type that implements `I` (at that instantiation) is implicitly convertible to such an interface object. Calling an interface function through an interface object (`handle.do_something()` where `handle: &Shape`, `it.next()` where `it: &var Iterator<u64>`) is resolved at **runtime through the carried type identity**, matched against the closed world of implementers (§5.4), to the concrete type's implementation.
 
 2. **Generic constraint.** An interface used as a type-parameter bound (`fn do<T: I>(...)`) restricts the generic to types that implement `I`. The call is resolved **statically** at each instantiation; no vtable is involved. Inside the generic body, a value of type `T` exposes the constraint's interface functions via dot notation; a `T: Number` value additionally supports the arithmetic and comparison operators (§3.1).
 
@@ -907,6 +934,7 @@ fn name(self s: &Shape) -> &[u8] { return "shape" }
 
 - A default implementation makes the corresponding interface function **optional** for implementing types.
 - An extension function written for a **concrete type** _overrides_ the default for that type. When resolving a call on a concrete value, a type-specific extension is always preferred over an interface default.
+- A **generic** interface's functions cannot have default implementations: the default's receiver would be a generic interface object, and those require full instantiation (above) — there is no one receiver type covering every instantiation.
 
 #### Compilation & Verification Mechanics
 
@@ -941,7 +969,7 @@ extern variadicFunc(...) -> *var u8
 - **Program entry:** execution starts at a zero-parameter function named `main` in the entry module. An integer result becomes the process exit code (truncated to the platform's width); any other result type, or none, exits with 0.
 - **Qualified vs. unqualified access:** an imported name may be written either unqualified (`Vector`) or module-qualified (`std::vector::Vector`). Every import also introduces an alias for qualified use — the explicit `as` name or the import path's last segment (`import pkg::mathx` allows `mathx::twice(...)`). Qualified access goes through the cross-module visibility check, so only `pub`/`exp` definitions are reachable that way. Unqualified access sees the requester's **own library** in full (the executable's own modules and `std::` count as one library), plus the `exp` definitions of each library the module imported **without an explicit `as`** — an unaliased library import _injects_ its exports into that module's unqualified namespace, while an aliased import (`import pkg::liba as la`) is reachable through the alias only (`la::Pair`, `la::Pair { ... }`).
 - **Qualified functions (constructors):** `fn Vector::empty<T>() -> Vector<T> { ... }` defines a plain free function living in the **type's namespace** instead of the module's flat namespace, called as `Vector::empty()` (or `alias::Vector::empty()` across an aliased import). The qualifier must name a type visible to the defining module - like extension functions, any accessible type qualifies, not only locally declared ones. Qualified functions of one type overload among themselves; the same name may freely exist as a free function or under other types. On an enum, a qualified name colliding with a variant is a compile-time error, so `Type::Name(...)` stays unambiguous and variant construction is unchanged. A qualified function must not declare a `self` receiver - it is a plain free function, not an extension (a `self` parameter is a compile-time error); no dot-call, no dispatch - the association is purely a namespace.
-- **Name collisions:** within one library, a name colliding with an existing definition is a redeclaration error, except that functions overload (§3.6). Different libraries may reuse names internally. A name visible unqualified in one module from **two different libraries** (own declaration vs. an injected export, or two injected exports) is a **compile-time error at the import**, resolved by aliasing an import to take its exports out of the unqualified namespace. Nothing is resolved implicitly — no shadowing, no cross-library overload merging. Two imports whose aliases collide (implicit or explicit) are likewise an error.
+- **Name collisions:** within one library, a name colliding with an existing definition is a redeclaration error, except that functions overload (§3.6) and a **macro may share a name with functions** — `#name(...)` always invokes the macro, a bare `name(...)` never does (§6.3, e.g. the `#read_file` macro besides `std::io`'s runtime `read_file`). Different libraries may reuse names internally. A name visible unqualified in one module from **two different libraries** (own declaration vs. an injected export, or two injected exports) is a **compile-time error at the import**, resolved by aliasing an import to take its exports out of the unqualified namespace. Nothing is resolved implicitly — no shadowing, no cross-library overload merging. Two imports whose aliases collide (implicit or explicit) are likewise an error.
 - **Merge-then-codegen:** every reachable module — including every library module — always merges into ONE compilation unit before type checking and code generation. The whole-program stages depend on it (closed-world interface dispatch, monomorphization, §3.9 layouts); only the per-module front-end stages (tokenize, parse) run in parallel. Libraries therefore recompile with each consuming program; the `.alloylib` payload exists to make that cheap, not to skip it.
 
 #### Import Namespaces
@@ -955,7 +983,7 @@ extern variadicFunc(...) -> *var u8
 - `alloyc lib entry.alloy [-o name.alloylib]` fully checks the unit standalone (all §3/§4 rules, flow and move analysis included) and packs the entry module plus every module of its own into a container. `std::` and `pkg::` dependencies are not packed — they stay imports the consuming program resolves, so a library's package dependencies load transitively.
 - The container embeds the **complete source** — the registry mandates open source, and the embedded source is authoritative: precompiled cache sections (future) are stamped with the producing compiler's version and silently ignored on mismatch, falling back to compiling the embedded source. A library therefore never breaks across compiler releases.
 - **Export boundary:** `exp` marks a definition as exported from a library. Within one compilation unit `exp` behaves exactly like `pub`; across a library boundary, only `exp` definitions are visible to consumers — qualified (`mathx::twice(...)`) or unqualified via an unaliased import per the injection rules above — while `pub` covers a library's internal cross-module structure without leaking it.
-- **Interface satisfaction stays closed-world:** whether a type satisfies an interface (§5.2) considers every extension in the merged unit, even library-internal ones — vtables span the whole program. Visibility governs who may _name_ an extension in a direct call, not whether it backs dynamic dispatch.
+- **Interface satisfaction stays closed-world:** whether a type satisfies an interface (§5.2) considers every extension in the merged unit, even library-internal ones — dynamic dispatch spans the whole program. Visibility governs who may _name_ an extension in a direct call, not whether it backs dynamic dispatch.
 - **Comptime re-runs per program** (§6): library comptime and macros are re-evaluated in the consuming program's merged unit, so compile-time reflection can see the final closed world (every interface implementer, every type), not just the library's own.
 
 ---
@@ -991,7 +1019,7 @@ A fault during compile-time evaluation (integer overflow, division by zero, an e
 To eliminate cross-compilation target safety errors and prevent memory leakage from host architectures into generated binaries, compile-time blocks are bound to strict computational constraints:
 
 - **The Pointer Barrier:** A compile-time evaluation block cannot yield an unmanaged reference (`&T`), a managed pointer (`*T`), a heap array (`*[T]`), or a closure (which owns captured references) that escapes into a runtime variable. Any data crossing the boundary from compile-time execution to a runtime variable state must be handled strictly as values. Breaking this constraint triggers a compile-time error. Slices (`&[T]`) are the exception: a slice result is **materialized** — deep-copied into static program data — so a comptime call yielding a string works. A comptime result is always a value or a slice, never an owning pointer: static data has no owner to free it.
-- **Strict Sandboxing Boundaries:** The compile-time interpreter is strictly restricted to the project's physical root directory workspace (mirroring physical filesystem rules §5.4).
+- **Strict Sandboxing Boundaries:** compile-time evaluation reaches the filesystem **only** through the comptime read built-in (`#read_file`, §6.4), and only for paths inside the project's root directory — the entry module's directory tree. Every other host capability is unreachable.
 - **Foreign Function Isolation:** Comptime blocks are strictly prohibited from invoking low-level `extern` C functions (§5.3). Compile-time evaluation can only run safe user-defined Alloy code or built-in system macros.
 
 ### 6.3 Macros
@@ -1006,7 +1034,7 @@ macro readTypeFromJson(path: &[u8]) {
 
 - **Signature and Inferred Types:** Macros are defined using the `macro` keyword. While macro input parameters are strictly typed, **macro return types are completely inferred by the compiler** based on the generated AST layout or the underlying type node replacement it yields.
 - **Declaration-only macros:** A macro may be declared without a body (`pub macro type_of(value);`), analogous to an interface's functions: the compiler supplies the implementation. A declaration-only macro's parameters need no type annotations; a macro **with** a body must type every parameter. Invoking a declared macro the compiler does not implement is a compile-time error. The built-in macros (§6.4) are declared this way in `std::macros`.
-- **Invocation Syntax:** To explicitly distinguish macros from standard functions, all macro calls must be preceded by the `#` character token.
+- **Invocation Syntax:** To explicitly distinguish macros from standard functions, all macro calls must be preceded by the `#` character token. Because the invocation syntax disambiguates, a macro **may share its name with functions** (§5.4): `#name(...)` always selects the macro, and a bare `name(...)` resolves the functions only.
 - **Declaration Order:** Because a macro's result type is inferred from the value it produces, the compiler evaluates a macro the moment it checks the invocation site. Every definition a macro's body touches (functions, types, other macros) must therefore appear **earlier in program order** than the invocation. (`#` expressions calling only regular functions are exempt: their signatures are known statically, so evaluation waits until checking completes and forward references work.)
 - **Value Position:** A macro invoked in value position (`const x = #m(1)`) takes the type of the value its body produced. Legal results are plain values: primitives, bools, strings and slices, fixed arrays, and named struct or enum values. A `#Type` result or a pointer in value position is a compile-time error (§3.4, §6.2).
 - **Macro Bodies:** A macro body is not statically type-checked; it executes in the compile-time interpreter, where calls resolve by name and arity. Faults inside a macro body are compile-time errors at the invocation site.
@@ -1028,6 +1056,7 @@ The compiler provides a small set of built-in macros, declared — but not imple
 | `enum_type`       | `() -> #Type`            | A fresh, empty enum `#Type`.                              |
 | `implementers_of` | `(interface) -> [#Type]` | Every type in the merged unit implementing the interface. |
 | `name_of`         | `(value) -> &[u8]`       | The variant name of an enum value, as a string.           |
+| `read_file`       | `(path: &[u8]) -> &[u8]` | The bytes of a project file, read at compile time as static data. The path resolves against the entry module's directory and must not escape it (§6.2); a missing, absolute, or escaping path is a compile-time error. Distinct from `std::io`'s runtime `read_file` — macro invocation (`#read_file`) always selects the macro. |
 
 A type may also be reflected directly by prefixing its name with `#` (`#u32`, `#Packet`) — see §3.4.
 

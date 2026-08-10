@@ -20,3 +20,9 @@ pub macro implementers_of(target);
 
 // The variant name of an enum value, as a string.
 pub macro name_of(value);
+
+// The bytes of a project file, read at compile time as static data. The
+// path resolves against the entry module's directory and must not escape
+// it (section 6.2). Distinct from std::io's runtime read_file: this one
+// is a macro, invoked '#read_file(...)' during compile-time evaluation.
+pub macro read_file(path);

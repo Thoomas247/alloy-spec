@@ -60,7 +60,7 @@ pub fn next(self cursor: &var StringCursor) -> Option<&u8> {
 // Borrows the contents in place. The view is invalidated by the next
 // mutation (growth may reallocate), like any Alloy reference.
 pub fn view(self string: &String) -> &[u8] {
-    if (string.storage is ::Some) |buffer: &| {
+    if (string.storage is ::Some |buffer: &|) {
         return buffer[..string.count];
     }
     return "";
@@ -69,7 +69,7 @@ pub fn view(self string: &String) -> &[u8] {
 // Appends one byte.
 pub fn push(self string: &var String, byte: u8) {
     string.ensure_capacity(string.count + 1);
-    if (string.storage is ::Some) |buffer: &var| {
+    if (string.storage is ::Some |buffer: &var|) {
         buffer[string.count] = byte;
     }
     string.count += 1;
@@ -78,7 +78,7 @@ pub fn push(self string: &var String, byte: u8) {
 // Appends every byte of the given text.
 pub fn append(self string: &var String, text: &[u8]) {
     string.ensure_capacity(string.count + text.length());
-    if (string.storage is ::Some) |buffer: &var| {
+    if (string.storage is ::Some |buffer: &var|) {
         var cursor = string.count;
         for (text) |byte| {
             buffer[cursor] = byte;
@@ -129,7 +129,7 @@ pub fn text_equals(left: &[u8], right: &[u8]) -> bool {
 // in use across; reassigning the owning field reclaims the old buffer.
 fn ensure_capacity(self string: &var String, needed: u64) {
     var current: u64 = 0;
-    if (string.storage is ::Some) |buffer: &| {
+    if (string.storage is ::Some |buffer: &|) {
         current = buffer.length();
     }
     if (needed <= current) {
@@ -143,7 +143,7 @@ fn ensure_capacity(self string: &var String, needed: u64) {
         grown_capacity = needed;
     }
     var grown: *var [u8] = new [0 : grown_capacity];
-    if (string.storage is ::Some) |buffer: &| {
+    if (string.storage is ::Some |buffer: &|) {
         for ([..string.count]) |index| {
             grown[index] = buffer[index];
         }

@@ -50,7 +50,7 @@ fn next(self c: &var PacketCursor) -> Option<&u64> {
 }
 
 fn describe(handle: &Serializable) -> bool {
-    if (handle is Packet) |concrete| {
+    if (handle is Packet |concrete|) {
         return concrete.serialize(2);
     }
     return match (handle) {
@@ -81,12 +81,12 @@ fn main() -> i32 {
     }
     var h: Holder = ::Boxed(move p);
 
-    if (h is ::Boxed) |boxed: *| {
+    if (h is ::Boxed |boxed: *|) {
         printf("id %d\n", boxed.id);
     }
 
     var phase: enum { Active, Stopped: u32 } = ::Active;
-    if (phase is ::Stopped) |code| {
+    if (phase is ::Stopped |code|) {
         counted += code to u64;
     }
 
