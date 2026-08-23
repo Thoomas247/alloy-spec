@@ -3,7 +3,7 @@ import std::macros;
 extern printf(format: &[u8], ...) -> i32;
 
 interface Serializable {
-    fn serialize(format: u32) -> bool;
+    fn serialize(self: &, format: u32) -> bool;
 }
 
 type Packet : Serializable = struct {
@@ -15,18 +15,18 @@ fn serialize(self p: &Packet, format: u32) -> bool {
     return format != 0;
 }
 
-macro label(name: &[u8]) {
+macro label(name: &[u8]) -> &[u8] {
     return name;
 }
 
-macro vector2() {
+macro vector2() -> #Type {
     var t = #struct_type();
     t.add_member("x", #f32);
     t.add_member("y", #f32);
     return t;
 }
 
-macro widthOf(wide: bool) {
+macro widthOf(wide: bool) -> #Type {
     if (wide) {
         return #u64;
     }

@@ -6,23 +6,23 @@
 // compile-time evaluation.
 
 // The '#Type' of the argument expression's type (section 4.4).
-pub macro type_of(value);
+pub macro type_of(value) -> #Type;
 
 // A fresh, empty struct '#Type', for synthesising a type.
-pub macro struct_type();
+pub macro struct_type() -> #Type;
 
 // A fresh, empty enum '#Type'.
-pub macro enum_type();
+pub macro enum_type() -> #Type;
 
 // The '#Type's of every type in the merged unit implementing the
 // interface, whole-world across libraries (section 7.4).
-pub macro implementers_of(target);
+pub macro implementers_of(target) -> &[#Type];
 
 // The variant name of an enum value, as a string.
-pub macro name_of(value);
+pub macro name_of(value) -> &[u8];
 
 // The bytes of a project file, read at compile time as static data. The
 // path resolves against the entry module's directory and must not escape
 // it (section 7.2). Distinct from std::io's runtime read_file: this one
 // is a macro, invoked '#read_file(...)' during compile-time evaluation.
-pub macro read_file(path);
+pub macro read_file(path) -> &[u8];

@@ -14,12 +14,12 @@ type Holder = enum {
 };
 
 interface Serializable {
-    fn serialize(format: u32) -> bool;
+    fn serialize(self: &, format: u32) -> bool;
 }
 
 extern printf(format: &[u8], ...) -> i32;
 
-macro readTypeFromJson(path: &[u8]) {
+macro readTypeFromJson(path: &[u8]) -> &[u8] {
     return path;
 }
 
@@ -43,18 +43,18 @@ fn iterator(self p: &Packet) -> PacketCursor {
 fn next(self c: &var PacketCursor) -> Option<&u64> {
     if (c.remaining == 0) {
         return Option::None;
-    };
+    }
     c.remaining -= 1;
     c.current = c.remaining;
     return Option::Some(&c.current);
 }
 
 fn describe(handle: &Serializable) -> bool {
-    if (handle is Packet |concrete|) {
+    if (handle is Packet |&concrete|) {
         return concrete.serialize(2);
     }
     return match (handle) {
-        Packet |packet| { yield packet.serialize(3); }
+        Packet |&packet| { yield packet.serialize(3); }
         else { yield handle.serialize(1); }
     };
 }
@@ -108,7 +108,7 @@ fn main() -> i32 {
     const base: i64 = 1 + 2 + (3 * 4);
     var wide = base;
 
-    const choice = #if (base > 4) yield 50 else yield 100;
+    const choice = #if (base > 4) 50 else 100;
     while (wide < choice) {
         wide += doubler(wide);
     }

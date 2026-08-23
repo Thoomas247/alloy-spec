@@ -207,7 +207,7 @@ interface_fn    = "fn" identifier "(" receiver { "," param } ")" [ "->" type ] t
 receiver        = "self" ":" ( "&" | "&" "var" | "*" | "*" "var" ) ;
 interface_marker = identifier [ "<" type { "," type } ">" ] ;
 fn_def          = "fn" [ identifier "::" ] identifier [ "<" type_param { "," type_param } ">" ] function ;
-macro_def       = "macro" identifier "(" [ macro_param { "," macro_param } ] ")"
+macro_def       = "macro" identifier "(" [ macro_param { "," macro_param } ] ")" "->" type
                   ( stmt_block | terminator ) ;
 macro_param     = identifier [ ":" type ] ;
 extern_def      = "extern" identifier "(" extern_params ")" [ "->" type ] terminator ;
@@ -230,6 +230,7 @@ base_type       = named_type
                 | enum_type
                 | array_type
                 | fn_type
+                | "#Type"                (* comptime descriptor, §4.4 *)
                 | comptime_expr ;
 
 named_type      = identifier { "::" identifier } [ "<" type { "," type } ">" ] ;
@@ -424,18 +425,18 @@ The `expression` rule is flat; this table alone fixes the grouping. Unary prefix
 
 ### 4.2 Composite & Derived Types
 
-| Syntax                         | Kind             | Notes                                                             |
-| ------------------------------ | ---------------- | ----------------------------------------------------------------- |
-| `struct { f: T, ... }`         | Struct           | Members in declaration order                                      |
-| `enum { A, B: T, ... }`        | Enum (sum type)  | Variants, each with an optional payload                           |
-| `[T : N]` (N > 0)              | Fixed array      | Compile-time size; stack or inline                                |
-| `&[T]`                         | Slice            | Non-owning view: raw pointer + `u64` length                       |
-| `*[T]`                         | Heap array       | Owned heap block, length fixed at allocation                      |
-| `(T1, T2) -> R`                | Function type    | First-class function value                                        |
-| `type X = BaseType`            | Named type       | Distinct by name; assignable down its own chain (§4.3 rule 4)     |
-| `*T` / `*var T`                | Pointer          | Owned heap instance, immutable / mutable                          |
-| `&T` / `&var T`                | Reference        | Non-owning borrow, immutable / mutable                            |
-| `&I` / `*I` (`I` an interface) | Interface object | Data pointer + the concrete type's identity (§6.2)                |
+| Syntax                         | Kind             | Notes                                                         |
+| ------------------------------ | ---------------- | ------------------------------------------------------------- |
+| `struct { f: T, ... }`         | Struct           | Members in declaration order                                  |
+| `enum { A, B: T, ... }`        | Enum (sum type)  | Variants, each with an optional payload                       |
+| `[T : N]` (N > 0)              | Fixed array      | Compile-time size; stack or inline                            |
+| `&[T]`                         | Slice            | Non-owning view: raw pointer + `u64` length                   |
+| `*[T]`                         | Heap array       | Owned heap block, length fixed at allocation                  |
+| `(T1, T2) -> R`                | Function type    | First-class function value                                    |
+| `type X = BaseType`            | Named type       | Distinct by name; assignable down its own chain (§4.3 rule 4) |
+| `*T` / `*var T`                | Pointer          | Owned heap instance, immutable / mutable                      |
+| `&T` / `&var T`                | Reference        | Non-owning borrow, immutable / mutable                        |
+| `&I` / `*I` (`I` an interface) | Interface object | Data pointer + the concrete type's identity (§6.2)            |
 
 An **interface used as a type** — only behind an indirection (`&I`, `&var I`, `*I`, `*var I`) — is an _interface object_: the address of a value plus the identity of its concrete type, which calls dispatch through at runtime (§6.2). A value of type `T` converts to an interface object of `I` exactly when `T` declares `I` as a marker (`type T : I = ...`). Going back down to the concrete type uses the same two constructs as enum discrimination, `match` and `is`.
 
@@ -520,7 +521,7 @@ Inline `struct { ... }` and `enum { ... }` types are allowed **wherever a type i
 
 ### 4.4 Compile-Time Special Types (`#Type`)
 
-A `#Type` is a first-class, mutable description of a type — a struct or enum layout, a primitive, or an interface — that compile-time code can read and rebuild. It exists **only during compile-time evaluation**; keeping one in a runtime declaration or variable is a compile-time error.
+A `#Type` is a first-class, mutable description of a type — a struct or enum layout, a primitive, or an interface — that compile-time code can read and rebuild. It exists **only during compile-time evaluation**; keeping one in a runtime declaration or variable is a compile-time error. `#Type` may be written as a type itself in a macro signature (`macro m(...) -> #Type;`, §7.3), which is the only place a comptime type appears in a declaration; written in a type position it always means the descriptor, never the reflection of a type named `Type`.
 
 A `#Type` comes from one of three places:
 
@@ -970,17 +971,17 @@ Compile-time code runs under strict limits, so host memory and host capabilities
 Macros are compile-time functions for reflection, source introspection, and type generation.
 
 ```alloy
-macro readTypeFromJson(path: &[u8]) {
+macro readTypeFromJson(path: &[u8]) -> #Type {
     // introspection and type mutation using compile-time features
 }
 ```
 
-- **Signature:** macro parameters are typed, but **the return type is inferred** from the AST or type node the macro produces.
-- **Declaration-only macros:** a macro may be declared without a body (`pub macro type_of(value);`), like an interface function, and the compiler supplies the implementation. Its parameters need no type annotations, while a macro **with** a body must type every parameter. Calling a declared macro the compiler does not implement is a compile-time error. The built-in macros (§7.4) are declared this way in `std::macros`.
+- **Signature:** a macro declares its result type with `->`, like a function, and the type is **required** — nothing is inferred from the body. The type may be a runtime type (`&[u8]`, `u32`, a named struct) or a comptime one: `#Type` for a type descriptor (§4.4), `&[#Type]` for a slice of them. Parameters are typed the same way.
+- **Declaration-only macros:** a macro may be declared without a body (`pub macro type_of(value) -> #Type;`), like an interface function, and the compiler supplies the implementation. Its parameters need no type annotations — a built-in like `#type_of` accepts an expression of any type — while a macro **with** a body must type every parameter. The result type is declared either way. Calling a declared macro the compiler does not implement is a compile-time error. The built-in macros (§7.4) are declared this way in `std::macros`.
 - **Invocation:** every macro call is prefixed with `#`. Because that distinguishes them, a macro **may share its name with functions** (§6.4): `#name(...)` always picks the macro, a bare `name(...)` only the functions.
-- **Declaration order:** since a macro's result type comes from the value it produces, the compiler evaluates a macro as soon as it checks the call, so every definition the body touches must appear **earlier in program order** than the call. `#` expressions that only call regular functions are exempt: their signatures are known statically, so evaluation waits until checking finishes and forward references work.
-- **Value position:** a macro called in value position (`const x = #m(1)`) takes the type of the value its body produced. Legal results are plain values: primitives, bools, strings and slices, fixed arrays, and named struct or enum values. A `#Type` or a pointer there is a compile-time error (§4.4, §7.2).
-- **Macro bodies** are not statically type-checked. They run in the compile-time interpreter, where calls resolve by name and arity, and a fault inside one is a compile-time error at the call site.
+- **Declaration order:** because the result type is declared, a call type-checks without running the body, so a macro's body may reference definitions declared later, exactly like a `#` expression over regular functions. Evaluation order still decides what a body _observes_: a type synthesised by an earlier comptime declaration is complete, one synthesised later is not (§7.4).
+- **Where a result may go** follows the declared type. A macro returning a runtime type may be called in value position (`const x = #m(1);`), and the legal runtime results are plain values: primitives, bools, strings and slices, fixed arrays, and named struct or enum values — a pointer result is a compile-time error (§7.2). A macro returning `#Type`, or any type holding one such as `&[#Type]`, may only be called in type position (`type T = #m(...);`) or inside a surrounding `#` expression, since a `#Type` cannot cross into runtime (§4.4).
+- **Macro bodies** are not statically type-checked. They run in the compile-time interpreter, where calls resolve by name and arity, and a fault inside one is a compile-time error at the call site. A body that produces something other than its declared type is a compile-time error at the call site too.
 
 ```alloy
 type T = #readTypeFromJson("types/T.json");
@@ -989,7 +990,7 @@ type P = #if (DEVELOPMENT) #struct { id: u32 } else #readTypeFromJson("types/P.j
 
 ### 7.4 Built-in Macros
 
-The compiler provides a few built-in macros, declared but not implemented in `std::macros` (§7.3), so they are discoverable like any other definition. Using one needs `import std::macros;`, and like all macros they are called with `#`.
+The compiler provides a few built-in macros, declared but not implemented in `std::macros` (§7.3), so they are discoverable like any other definition — `pub macro type_of(value) -> #Type;` and so on, with the declared result types below. Using one needs `import std::macros;`, and like all macros they are called with `#`.
 
 | Macro             | Signature                | Semantics                                                                                                                                                                                                                                                                                                  |
 | ----------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
