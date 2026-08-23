@@ -1,24 +1,24 @@
 // The iteration interfaces driving 'for' loops.
 //
-// Both are lang items (LANGUAGE_SPEC.md section 5.1a) at the canonical
+// Both are lang items (LANGUAGE_SPEC.md section 6.1a) at the canonical
 // paths std::iterable::Iterable and std::iterable::Iterator. Fixed
 // arrays, slices, heap arrays, and ranges are for-compatible natively
-// (section 4.3) and take no marker; a custom type becomes a 'for'
+// (section 5.3) and take no marker; a custom type becomes a 'for'
 // subject by conforming to Iterable, whose 'iterator' yields a cursor
 // conforming to Iterator. Fully instantiated, they also form interface
 // objects ('it: &var Iterator<u64>') dispatching to a concrete cursor
-// unknown until runtime (section 5.2).
+// unknown until runtime (section 6.2).
 
 import std::option;
 
 // The cursor: 'next' advances and yields a reference to the next
 // element in place, or 'None' when exhausted.
 pub interface Iterator<T> {
-    fn next() -> Option<&T>;
+    fn next(self: &var) -> Option<&T>;
 }
 
 // The container: 'iterator' yields a fresh cursor by value. Each
 // conforming type binds 'It' to its concrete cursor type.
 pub interface Iterable<T, It: Iterator<T>> {
-    fn iterator() -> It;
+    fn iterator(self: &) -> It;
 }

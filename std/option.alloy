@@ -1,6 +1,6 @@
 // The optional value: a payload ('Some') or its absence ('None').
 //
-// Option is a lang item (LANGUAGE_SPEC.md section 5.1a) at the canonical
+// Option is a lang item (LANGUAGE_SPEC.md section 6.1a) at the canonical
 // path std::option::Option: the compiler's cursor-protocol 'for' lowering
 // matches on the Option returned by an iterator's 'next'. Nothing here is
 // otherwise special; it is an ordinary generic enum.

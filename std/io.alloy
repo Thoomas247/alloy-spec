@@ -1,7 +1,7 @@
 // Console and file input/output.
 //
 // This module is the standard library's FFI barrier (LANGUAGE_SPEC.md
-// section 5.3): programs call these safe wrappers and never touch the C
+// section 6.3): programs call these safe wrappers and never touch the C
 // functions underneath. The externs are C standard io; streams cross the
 // boundary as opaque i64 handles (a FILE pointer natively; the
 // interpreter implements the same names over the host filesystem, with

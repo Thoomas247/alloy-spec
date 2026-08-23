@@ -1,12 +1,12 @@
 // The growable array.
 //
 // A Vector owns a heap buffer and a count of the elements in use. Growth
-// follows the manual pattern of LANGUAGE_SPEC.md section 4.2: allocate a
+// follows the manual pattern of LANGUAGE_SPEC.md section 5.2: allocate a
 // larger buffer, copy the elements across, and reassign the owning field,
 // which reclaims the previous buffer automatically. The buffer doubles on
 // exhaustion, so pushes are amortized constant.
 //
-// Element reads copy deeply, like every Alloy assignment (section 4.2).
+// Element reads copy deeply, like every Alloy assignment (section 5.2).
 // The storage starts empty ('None') because a fresh allocation needs a
 // fill value, and no value of a generic element type exists until the
 // first push provides one.
@@ -108,7 +108,7 @@ fn capacity<T>(self vector: &Vector<T>) -> u64 {
     return 0;
 }
 
-// The cursor behind 'for (vector) |element|' (section 4.3): it borrows
+// The cursor behind 'for (vector) |element|' (section 5.3): it borrows
 // the vector and hands out references to the elements in place.
 pub type VectorCursor<T> : Iterator<T> = struct {
     subject: &Vector<T>,

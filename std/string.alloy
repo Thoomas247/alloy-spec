@@ -1,7 +1,7 @@
 // The owned, growable byte string.
 //
 // A String owns a heap buffer of UTF-8 bytes and a count of the bytes in
-// use. Growth follows the manual pattern of LANGUAGE_SPEC.md section 4.2
+// use. Growth follows the manual pattern of LANGUAGE_SPEC.md section 5.2
 // with a doubling buffer, so appends are amortized constant. 'view'
 // borrows the contents in place as a plain '&[u8]' slice, the type every
 // text-taking function (and string literal) already uses.
@@ -38,7 +38,7 @@ pub fn length(self string: &String) -> u64 {
     return string.count;
 }
 
-// The cursor behind 'for (string) |byte|' (section 4.3): it borrows the
+// The cursor behind 'for (string) |byte|' (section 5.3): it borrows the
 // contents once and hands out references to the bytes in place.
 pub type StringCursor : Iterator<u8> = struct {
     bytes: &[u8],
