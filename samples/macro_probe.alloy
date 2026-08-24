@@ -16,7 +16,7 @@ fn serialize(self p: &Packet, format: u32) -> bool {
 }
 
 macro label(name: &[u8]) -> &[u8] {
-    return name;
+    return &name;
 }
 
 macro vector2() -> #Type {

@@ -20,7 +20,7 @@ interface Serializable {
 extern printf(format: &[u8], ...) -> i32;
 
 macro readTypeFromJson(path: &[u8]) -> &[u8] {
-    return path;
+    return &path;
 }
 
 pub fn serialize(self p: &Packet, format: u32) -> bool {
