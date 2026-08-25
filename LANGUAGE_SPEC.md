@@ -114,7 +114,7 @@ import   as       extern   type     enum     struct
 const    var      fn       if       else     while
 for      match    break    yield    return   new    move
 self     pub      exp      true     false    macro  interface
-is       to
+is       to       continue
 ```
 
 ### 2.5 Operators & Punctuation
@@ -249,6 +249,7 @@ statement       = var_def
                 | while_expr
                 | match_expr
                 | break_stmt
+                | continue_stmt
                 | yield_stmt
                 | return_stmt
                 | expr_stmt ;
@@ -256,6 +257,7 @@ statement       = var_def
 var_def         = ( "var" | "const" ) identifier [ ":" type ] "=" expression terminator ;
 stmt_block      = "{" { statement } "}" ;
 break_stmt      = "break" [ expression ] terminator ;
+continue_stmt   = "continue" terminator ;
 yield_stmt      = "yield" expression terminator ;
 return_stmt     = "return" [ expression ] terminator ;
 expr_stmt       = expression ( assign_op expression terminator | terminator ) ;
@@ -696,7 +698,9 @@ for (items) |item| {
 
 With a value, the loop evaluates to that value — the same channel `yield` uses in a value-position loop (below). A `break` outside a loop is a compile-time error.
 
-**`yield value`** produces the value of the **innermost enclosing value-position construct**: an `if`, a `match`, or a `for` / `while` with an `else` clause. A `yield` inside a loop that is not itself value-position passes out through that loop to the nearest value-position `if` or `match`, exiting the loop on the way and dropping its owned locals normally. A `yield` with no value-position construct around it is a compile-time error: a statement-position `if`, `match`, or loop has nothing to receive the value and is transparent to both `break` and `yield`.
+**`continue`** skips the rest of the body and begins the next iteration of the **innermost enclosing loop**, likewise passing through any `if` or `match` in between: a `while` re-evaluates its condition, a `for` advances to its next element — every subject of a multi-subject loop at once. A `continue` outside a loop is a compile-time error.
+
+**`yield value`** produces the value of the **innermost enclosing value-position construct**: an `if`, a `match`, or a `for` / `while` with an `else` clause. A `yield` inside a loop that is not itself value-position passes out through that loop to the nearest value-position `if` or `match`, exiting the loop on the way and dropping its owned locals normally. A `yield` with no value-position construct around it is a compile-time error: a statement-position `if`, `match`, or loop has nothing to receive the value — `yield` passes through all three, `break` and `continue` through a statement-position `if` or `match` only, to their loop.
 
 #### `if` as a Value
 
@@ -709,7 +713,7 @@ var level = if (score > 90) { yield "high"; } else { yield "low"; };
 
 #### Path Termination
 
-A conservative flow analysis runs over every function body at compile time. A statement **terminates** when control cannot fall out of it: `return`, `break`, and `yield` terminate; a block terminates when any statement in it does; an `if` with an `else` terminates when both branches do; a `match` terminates when every arm does; `while (true)` with no `break` reaching it never completes. Conditions are never assumed, and ordinary loops always count as skippable.
+A conservative flow analysis runs over every function body at compile time. A statement **terminates** when control cannot fall out of it: `return`, `break`, `continue`, and `yield` terminate; a block terminates when any statement in it does; an `if` with an `else` terminates when both branches do; a `match` terminates when every arm does; `while (true)` with no `break` reaching it never completes. Conditions are never assumed, and ordinary loops always count as skippable.
 
 - **Definite return:** a function or lambda with a return type must terminate on every path; falling off the end is a compile-time error.
 - **Definite yield:** a bare-expression branch of a value `if` yields by itself and always counts as terminating; every block branch of a value `if` must terminate; a bare-expression arm of a value `match` likewise yields by itself; every block arm of a value `match` must terminate unless an external `else` supplies the fall-through value, in which case that `else` must terminate; the `else` of a value-yielding loop must terminate.
@@ -760,7 +764,7 @@ var y = match (state) {   // bare-expression arms, each ended with ';'
 - **Subjects:** an enum value, a numeric primitive, a character literal, or a string literal (matched as an array of integers). Enum arms name variants fully (`State::Idle`) or implied (`::Idle`, §4.2).
 - **Captures** are valid **only** on enum variants that carry a payload; using one on numbers, characters, or strings is a compile-time error. They follow §3.1: `|a|` deep-copies the payload, `|&a|` and `|&var a|` borrow it in place, and `|move a|` takes a pointer payload out, leaving the subject moved-from after the `match`.
 - **Exhaustiveness:** only a `match` used **as an expression** must cover every subject value, since it has to produce one. An enum subject is exhaustive when every variant has an arm, or when an internal `else` arm is present. Numbers, characters, strings, and interface objects have open domains, so in expression position they always need an internal `else`. A non-exhaustive value-yielding `match` is a compile-time error. A statement `match` has no such rule: it may cover any subset and does nothing when no arm matches.
-- **Arm bodies:** an arm body is a block, or — in value position only — a bare expression ended with `;` (`::Idle 0;`), which yields that value implicitly. The `;` keeps the next pattern from being read as a continuation of the expression, since `::A x ::B` would otherwise parse as the path `x::B`. A block arm produces the value with `yield value`. A `break` inside an arm targets the enclosing loop, never the match.
+- **Arm bodies:** an arm body is a block, or — in value position only — a bare expression ended with `;` (`::Idle 0;`), which yields that value implicitly. The `;` keeps the next pattern from being read as a continuation of the expression, since `::A x ::B` would otherwise parse as the path `x::B`. A block arm produces the value with `yield value`. A `break` or `continue` inside an arm targets the enclosing loop, never the match.
 - **External `else` block:** the optional `else` after the closing brace is only allowed when the `match` is an expression. It runs if and only if the selected arm finished **without** a `yield` — it is not a fallback for an unmatched subject — and must supply a value of the expected type. An external `else` on a statement `match` is a compile-time error.
 
 ---
