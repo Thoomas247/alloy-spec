@@ -26,6 +26,13 @@ pub fn String::from(text: &[u8]) -> String {
     return result;
 }
 
+// String representation of the given integer.
+pub fn String::from(number: i64) -> String {
+    var result = String::with_capacity((number to u64 % 10) + 1);
+    result.append_integer(number);
+    return result;
+}
+
 // Allocates a string able to hold at least 'size' bytes before growing.
 pub fn String::with_capacity(size: u64) -> String {
     var str = String { .storage = ::None, .count = 0 };
