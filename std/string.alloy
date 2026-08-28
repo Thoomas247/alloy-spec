@@ -28,7 +28,16 @@ pub fn String::from(text: &[u8]) -> String {
 
 // String representation of the given integer.
 pub fn String::from(number: i64) -> String {
-    var result = String::with_capacity((number to u64 % 10) + 1);
+    var digits: u64 = 1;
+    var remaining = number / 10;
+    while (remaining != 0) {
+        digits += 1;
+        remaining /= 10;
+    }
+    if (number < 0) {
+        digits += 1;
+    }
+    var result = String::with_capacity(digits);
     result.append_integer(number);
     return result;
 }

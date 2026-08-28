@@ -559,14 +559,15 @@ Two operators cover what §4.3 does not do implicitly. Both take a type on the r
 | `x to T` | Conversion cast       | Converts the value to a `T`, producing a new value.                     |
 
 - `as` needs both types to have the same byte width, by the §4.9 layout rules. On a reference (`&S`) it gives a `&T` over the same memory with no copy, and the width rule then applies to the pointees.
-- `to` is defined for `Number` types (§6.2) and does the usual numeric conversions: truncation, sign change, float/integer rounding.
+- `to` is defined for `Number` types (§6.2) and keeps the value's **meaning** in the new format. A value the target cannot represent — a negative into an unsigned, a magnitude past the target's range — is a runtime fault in checked builds. Converting a float to an integer drops the fractional part (rounds toward zero), and the whole part must fit; converting into a float rounds to the nearest representable value.
 - `is` (§4.2) is in the same grammar family but is a runtime test, giving a `bool` and an optional capture.
 
 ```alloy
 var raw: u32 = 0x3F800000;
 var f = raw as f32;         // same bits, read as f32 (1.0)
-var n: i64 = -5;
-var u = n to u32;           // numeric conversion, changes the value
+var n: i64 = 300;
+var u = n to u32;           // same value in a new format
+var b = n to u8;            // runtime fault: 300 does not fit u8
 ```
 
 ### 4.6 Function Overloading
