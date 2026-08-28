@@ -77,7 +77,7 @@ pub fn next(self cursor: &var StringCursor) -> Option<&u8> {
 // mutation (growth may reallocate), like any Alloy reference.
 pub fn view(self string: &String) -> &[u8] {
     if (string.storage is ::Some |&buffer|) {
-        return buffer[..string.count];
+        return &buffer[..string.count];
     }
     return "";
 }

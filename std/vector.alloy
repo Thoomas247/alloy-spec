@@ -72,7 +72,7 @@ pub fn get<T>(self vector: &Vector<T>, index: u64) -> Option<&T> {
 // Alloy reference.
 pub fn view<T>(self vector: &Vector<T>) -> &[T] {
     if (vector.storage is ::Some |&buffer|) {
-        return buffer[..vector.count];
+        return &buffer[..vector.count];
     }
     return [];
 }

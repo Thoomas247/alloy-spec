@@ -278,7 +278,7 @@ binary_op       = "+" | "-" | "*" | "/" | "%"
 cast_expr       = unary_expr { "is" ( implied_variant | named_type ) [ "|" capture "|" ] | "as" type | "to" type } ;
 
 unary_expr      = unary_op unary_expr | postfix_expr ;
-unary_op        = "-" | "~" | "!" | "&" | "new" | "move" ;
+unary_op        = "-" | "~" | "!" | "&" [ "var" ] | "new" | "move" ;
 
 postfix_expr    = primary_expr { postfix_suffix } ;
 postfix_suffix  = "(" [ expr { "," expr } ] ")"                            (* call *)
@@ -366,7 +366,7 @@ The two mix freely (`if (c) a else { yield b; }`), and an `else` may carry anoth
 
 **Range generators.** `[start..end]` is the array of integers from `start` (inclusive) to `end` (exclusive), so `[0..5]` is `[0, 1, 2, 3, 4]`; `[..end]` starts at `0`. Both bounds are integers of one type (§4.3; untyped literals default to `i32`), and a literal `end` below a literal `start` is a compile-time error. Literal bounds give a stack array `[T : end - start]`, runtime bounds need `new` (giving `*[T]`) — except as a `for` subject, where no array is built and runtime bounds are always fine (§5.3).
 
-**Subslicing.** `arr[start..end]` borrows a slice (`&[T]`) over elements `start` to `end` in place, with no copy; `arr[..end]` starts at `0`. The subject may be any array form, and the view is mutable when the subject is. Bounds must satisfy `start <= end <= length`; breaking that is a runtime fault in checked builds. Like any reference, the view dangles once the subject is dropped, moved, or reallocated.
+**Subslicing.** `arr[start..end]` denotes the **unsized array value** `[T]` of elements `start` to `end` in place; `arr[..end]` starts at `0`. The subject may be any array form. Like any unsized value, the bare form is valid only where it is consumed in place (§5.2): a method receiver, an index or subslice subject, a `for` subject, an operand of `new` — `new arr[start..end]` copies the range into an owned `*[T]`. Anywhere else the borrow is written out: `&arr[start..end]` is the immutable view `&[T]`, `&var arr[start..end]` the mutable `&var [T]`, valid only when the subject is mutable; a bare subslice in a value position is a compile-time error. Bounds must satisfy `start <= end <= length`; breaking that is a runtime fault in checked builds. Like any reference, the view dangles once the subject is dropped, moved, or reallocated.
 
 **Disambiguation.** Two forms need lookahead, and an implementation **must** resolve them this way:
 
@@ -401,7 +401,7 @@ Higher number binds tighter. All binary operators are **left-associative**.
 | 20             | `&&`              |
 | 10 (loosest)   | `\|\|`            |
 
-The `expression` rule is flat; this table alone fixes the grouping. Unary prefixes (`-`, `~`, `!`, `&`, `new`, `move`) bind tighter than every binary operator and are right-associative. Postfix operators (call `()`, generic call `<>()`, member `.`, index `[]`) bind tighter still. The casts (`is`, `as`, `to`, §4.5) sit between: looser than the unary prefixes, tighter than every binary operator.
+The `expression` rule is flat; this table alone fixes the grouping. Unary prefixes (`-`, `~`, `!`, `&`, `&var`, `new`, `move`) bind tighter than every binary operator and are right-associative. Postfix operators (call `()`, generic call `<>()`, member `.`, index `[]`) bind tighter still. The casts (`is`, `as`, `to`, §4.5) sit between: looser than the unary prefixes, tighter than every binary operator.
 
 ---
 
@@ -437,7 +437,7 @@ The `expression` rule is flat; this table alone fixes the grouping. Unary prefix
 | `(T1, T2) -> R`                | Function type    | First-class function value                                    |
 | `type X = BaseType`            | Named type       | Distinct by name; assignable down its own chain (§4.3 rule 4) |
 | `*T` / `*var T`                | Pointer          | Owned heap instance, immutable / mutable                      |
-| `&T` / `&var T`                | Reference        | Non-owning borrow, immutable / mutable                        |
+| `&T` / `&var T`                | Reference        | Non-owning borrow, immutable / mutable — made by `&x` / `&var x` (§5.2) |
 | `&I` / `*I` (`I` an interface) | Interface object | Data pointer + the concrete type's identity (§6.2)            |
 
 An **interface used as a type** — only behind an indirection (`&I`, `&var I`, `*I`, `*var I`) — is an _interface object_: the address of a value plus the identity of its concrete type, which calls dispatch through at runtime (§6.2). A value of type `T` converts to an interface object of `I` exactly when `T` declares `I` as a marker (`type T : I = ...`). Going back down to the concrete type uses the same two constructs as enum discrimination, `match` and `is`.
@@ -560,6 +560,7 @@ Two operators cover what §4.3 does not do implicitly. Both take a type on the r
 
 - `as` needs both types to have the same byte width, by the §4.9 layout rules. On a reference (`&S`) it gives a `&T` over the same memory with no copy, and the width rule then applies to the pointees.
 - `to` is defined for `Number` types (§6.2) and keeps the value's **meaning** in the new format. A value the target cannot represent — a negative into an unsigned, a magnitude past the target's range — is a runtime fault in checked builds. Converting a float to an integer drops the fractional part (rounds toward zero), and the whole part must fit; converting into a float rounds to the nearest representable value.
+- `to` on an **enum** value gives its integer representation: the variant's **tag**, its zero-based declaration index (§4.9). The target must be an integer type, the usual range rule applies, and the payload of a carrying variant plays no part. The operand reads through pointee transparency like any use, so a `&E` converts its pointee's tag. The reverse, integer `to E`, builds the variant whose tag equals the value: a value outside the enum's variants, or naming a **payload-carrying** variant — `to` cannot invent the payload — is a runtime fault in checked builds. The payload area is zeroed either way, so a release-mode conversion still drops safely.
 - `is` (§4.2) is in the same grammar family but is a runtime test, giving a `bool` and an optional capture.
 
 ```alloy
@@ -602,7 +603,7 @@ Bindings are immutable by default:
 - **`const`** declares an immutable binding, **`var`** a mutable one.
 - **Parameters are immutable.** A function changes caller state only through `&var` / `*var` indirections passed to it.
 - **Assignment**, compound included, needs a mutable target: a `var` local, or a location reached through a `&var` / `*var`.
-- **`&var x`**, and `|&var x|` / `|move x|` captures, need `x` to be mutable.
+- **`&var x`**, and `|&var x|` / `|move x|` captures, need `x` to be mutable. A plain `&x` borrow is always immutable, whatever the binding (§5.2).
 - Mutability travels with pointee transparency (§5.2): a field reached through a `&var T` is mutable even when the reference binding is `const`, and through a `&T` it is immutable even on a `var` binding. Direct fields and elements take the binding's mutability.
 
 ### 4.9 Data Layout
@@ -638,13 +639,13 @@ Three operators step outside pointee transparency:
 
 - **`move`** is the **only** operator that reads its operand as an address: `var q: *T = move p` transfers `p`'s pointer into `q` and clears `p` (below). It works on any pointer operand — `*T`, `*var T`, `*[T]` — and gives back that same pointer type.
 - **`new <expression>`** evaluates an expression, deep-copies the result into a fresh heap allocation, and gives a pointer: `new 5`, `new T {}`, `new [0 : n]`, `new some_local`.
-- **Unary `&`** gives a reference to any value: a local, a field, an element, or a heap value behind a pointer (`&p` references `p`'s pointee). On a heap array it gives a **slice** (`&[T]`) over every element in place — the only non-owning view of a `*[T]`, as subslicing (§3.1) is of a range.
+- **Unary `&`** gives a reference to any value: a local, a field, an element, or a heap value behind a pointer (`&p` references `p`'s pointee). On a heap array it gives a **slice** (`&[T]`) over every element in place — the only non-owning view of a `*[T]`, as subslicing (§3.1) is of a range. **The written form fixes the borrow's mutability**: `&x` is always the immutable `&T` / `&[T]`, and `&var x` is the mutable `&var T` / `&var [T]`, valid only when the borrowed location is itself mutable (§4.8). On an operand already carrying a view — a `&var T` binding, a call result, a subslice — the form still governs: `&x` passes the view through immutably (a silent downgrade), while `&var x` keeps it mutable and is a compile-time error when the source view is immutable.
 
 #### Explicit Assignment Rules
 
-- **To a reference (`&T` / `&var T`)** the right-hand side **must** use `&` (`var r: &i32 = &stack_var`). The empty array literal `[]` (§3.1) is the one exception: it is already a slice, with nothing behind it to borrow.
+- **To a reference (`&T` / `&var T`)** the right-hand side **must** use `&` — and for a `&var T` / `&var [T]` target, `&var` (`var r: &i32 = &stack_var`, `var w: &var i32 = &var counter`). A mutable borrow still fits an immutable target (§4.3). The empty array literal `[]` (§3.1) is the one exception: it is already a slice, with nothing behind it to borrow.
 - **To a pointer (`*T` / `*var T` / `*[T]`)** the right-hand side **must** use `new` or `move` (`var p: *i32 = new 5`, `var p2: *i32 = move p`). A bare pointer would copy the pointee, never alias it.
-- **A reference is borrowed explicitly.** A reference-typed value — from a call or from a variable, local, parameter, field, or element alike — never flows bare into a **use site**: a binding, an argument, a member initializer, an assignment value, or a `return` / `break` / `yield`. Writing `&x` or `&f()` keeps the borrow visibly; unary `&` on something already reference-typed passes that same borrow through, and is the one case where `&` needs no addressable operand. A bare use means the value instead:
+- **A reference is borrowed explicitly.** A reference-typed value — from a call or from a variable, local, parameter, field, or element alike — never flows bare into a **use site**: a binding, an argument, a member initializer, an assignment value, or a `return` / `break` / `yield`. Writing `&x` or `&f()` keeps the borrow visibly; unary `&` on something already reference-typed passes that same borrow through — immutably for `&`, mutably for `&var` (which demands a mutable source view) — and is the one case where `&` needs no addressable operand. A bare use means the value instead:
   - a bare `&T` **pierces** to a deep copy of the pointee, matching pointee transparency on reads — so it no longer fits a `&T` parameter;
   - a bare `&[T]` is a compile-time error, since `[T]` has no size: write `&x` / `&f()` to keep the view, or `new x` / `new f()` to copy the array into an owned `*[T]` (the only way to copy it);
   - a bare interface object is a compile-time error too, since an erased value cannot be copied; write `&x`.

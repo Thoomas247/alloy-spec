@@ -12,5 +12,5 @@
 // executes. Unavailable at compile time (section 7.2).
 pub fn arguments() -> &[&[u8]] {
     const empty: [&[u8] : 1] = [""];
-    return empty[..0];
+    return &empty[..0];
 }
