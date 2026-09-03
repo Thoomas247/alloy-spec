@@ -114,7 +114,7 @@ import   as       extern   type     enum     struct
 const    var      fn       if       else     while
 for      match    break    yield    return   new    move
 self     pub      exp      true     false    macro  interface
-is       to       continue
+is       to       continue panic
 ```
 
 ### 2.5 Operators & Punctuation
@@ -252,6 +252,7 @@ statement       = var_def
                 | continue_stmt
                 | yield_stmt
                 | return_stmt
+                | panic_stmt
                 | expr_stmt ;
 
 var_def         = ( "var" | "const" ) identifier [ ":" type ] "=" expression terminator ;
@@ -260,6 +261,7 @@ break_stmt      = "break" [ expression ] terminator ;
 continue_stmt   = "continue" terminator ;
 yield_stmt      = "yield" expression terminator ;
 return_stmt     = "return" [ expression ] terminator ;
+panic_stmt      = "panic" [ expression ] terminator ;   (* the expression is a '&[u8]' message, §5.3 *)
 expr_stmt       = expression ( assign_op expression terminator | terminator ) ;
 
 terminator      = ";" ;   (* the block statements above carry none *)
@@ -380,7 +382,7 @@ The two mix freely (`if (c) a else { yield b; }`), and an `else` may carry anoth
 - `|x|` — a deep copy of the value (the default)
 - `|&x|` — an immutable reference to the value in place
 - `|&var x|` — a mutable reference; the subject must be mutable
-- `|move x|` — an owning capture: it moves the pointer into `x` exactly like `move` (§5.2), leaving the source — the enum subject of an `is` test or `match`, or the captured variable of a lambda — moved-from. Valid only on a pointer value (`*T` / `*var T` / `*[T]`), since only pointers move, and the subject must be mutable.
+- `|move x|` — an owning capture: it moves the value into `x` exactly like `move` (§5.2) — a pointer transfers, a value moves its owning members out and copies the rest, a reference does that to its pointee — leaving the source (the enum subject of an `is` test or `match`, the element of a `for` subject, or the captured variable of a lambda) moved-from with its pointers nulled. When the value owns anything the subject must be mutable; a value that owns nothing is simply copied.
 
 A capture carries no type annotation: the type always comes from the subject. Pointee transparency (§5.2) applies: "the value" is what the subject reads as, so `|&x|` on an owning-pointer payload borrows the **pointee** — a `*T` payload gives `&T`, a `*[T]` payload gives the slice `&[T]` — never a reference to the pointer itself. This is the only capture syntax, and it is identical at every capture site: lambda capture lists, `is` tests (§4.2), `for`, and `match` arms. An interface-object capture must state its form — `|&x|`, `|&var x|`, or `|move x|` — because an erased value cannot be copied; a plain `|x|` there is a compile-time error (§4.2).
 
@@ -527,7 +529,7 @@ A `#Type` is a first-class, mutable description of a type — a struct or enum l
 
 A `#Type` comes from one of three places:
 
-- **`#T`** — a type prefixed with `#`, either named (`#u32`, `#Packet`) or an inline layout written in place (`#struct { id: u32 }`, `#enum { A, B: u8 }`). `#T.member_names()` reflects on `T` directly.
+- **`#T`** — a type prefixed with `#`, either named (`#u32`, `#Packet`) or an inline layout written in place (`#struct { id: u32 }`, `#enum { A, B: u8 }`). `#T.member_names()` reflects on `T` directly. Inside a generic function the name may be one of its **type parameters** (§4.7): `#T` then reflects the type bound at each instantiation, so a `#` expression over it — `#T.size()`, `#T.name()` — is evaluated once per instantiation rather than once per program, and its result type is still fixed statically by the method called. Such an expression sees the same names as any other `#` expression (§7.1).
 - **Built-in macros** — `#type_of(expr)`, `#struct_type()`, `#enum_type()`, and `#implementers_of(I)`, specified in §7.4.
 - **`#void`** — "no payload". Passed as the member type to `add_member` on an enum `#Type` it makes a payload-less variant, and reflected enums report theirs the same way. `void` is not a value type: `#void` in a runtime position is an error.
 
@@ -546,6 +548,8 @@ All `#Type` methods run at compile time and are called with dot syntax.
 | `remove_member`        | `(name: &[u8])`                | Removes the named member.                                                                                                                                                                                                                              |
 | `member_names`         | `() -> &[&[u8]]`               | Member names, in declaration order.                                                                                                                                                                                                                    |
 | `member_types`         | `() -> &[#Type]`               | Member types, in the same order.                                                                                                                                                                                                                       |
+| `size`                 | `() -> u64`                    | The type's byte size under the §4.9 layout rules — C's `sizeof`, padding included. Computed from the members in hand, so a `#Type` rebuilt with `add_member` reports its new size. A type with no runtime layout — an interface, `#void`, a generic type as a template — is a compile-time error.                        |
+| `alignment`            | `() -> u64`                    | The type's byte alignment under §4.9 — C's `alignof`, always a power of two. Same rules as `size`.                                                                                                                                                                                                                      |
 
 A `#Type` is a **value**: `add_member` and `remove_member` change the `#Type` in hand, not the type it came from. Assigned through `type T = <#Type-valued comptime expression>`, it becomes the new type `T`. A synthesised struct behaves as a structural layout (§4.3 rule 6) and a synthesised enum as an inline enum (§4.3 rule 7), with variants built, matched, and tested through the name (`T::Variant`) like any declared enum.
 
@@ -559,6 +563,8 @@ Two operators cover what §4.3 does not do implicitly. Both take a type on the r
 | `x to T` | Conversion cast       | Converts the value to a `T`, producing a new value.                     |
 
 - `as` needs both types to have the same byte width, by the §4.9 layout rules. On a reference (`&S`) it gives a `&T` over the same memory with no copy, and the width rule then applies to the pointees.
+- `as` on a **slice** (`&[S] as &[T]`) views the same elements' bytes as `T`s, again with no copy. A slice's length is a runtime value, so the width rule becomes a runtime one: the view's byte length (`length * S.size()`) must be a **multiple** of `T.size()`, and its data must be aligned for `T` — breaking either is a runtime fault in checked builds. The result has `byte length / T.size()` elements and aliases the source, so a write through either view is visible through the other. A zero-sized `T` is a compile-time error. This is how raw storage becomes typed: `&var bytes[offset..offset + #T.size()] as &var [T]` (§4.4) carves one `T` out of a byte page.
+- A reference or slice `as` never **gains mutability**: `&S as &var T` and `&[S] as &var [T]` are compile-time errors, while a `&var` source may cast to either form.
 - `to` is defined for `Number` types (§6.2) and keeps the value's **meaning** in the new format. A value the target cannot represent — a negative into an unsigned, a magnitude past the target's range — is a runtime fault in checked builds. Converting a float to an integer drops the fractional part (rounds toward zero), and the whole part must fit; converting into a float rounds to the nearest representable value.
 - `to` on an **enum** value gives its integer representation: the variant's **tag**, its zero-based declaration index (§4.9). The target must be an integer type, the usual range rule applies, and the payload of a carrying variant plays no part. The operand reads through pointee transparency like any use, so a `&E` converts its pointee's tag. The reverse, integer `to E`, builds the variant whose tag equals the value: a value outside the enum's variants, or naming a **payload-carrying** variant — `to` cannot invent the payload — is a runtime fault in checked builds. The payload area is zeroed either way, so a release-mode conversion still drops safely.
 - `is` (§4.2) is in the same grammar family but is a runtime test, giving a `bool` and an optional capture.
@@ -569,6 +575,9 @@ var f = raw as f32;         // same bits, read as f32 (1.0)
 var n: i64 = 300;
 var u = n to u32;           // same value in a new format
 var b = n to u8;            // runtime fault: 300 does not fit u8
+var bytes: [u8 : 8] = [1, 0, 0, 0, 2, 0, 0, 0];
+var words = &bytes[0..8] as &[u32];   // two elements: 1 and 2, no copy
+var odd = &bytes[0..6] as &[u32];     // runtime fault: 6 bytes is not a multiple of 4
 ```
 
 ### 4.6 Function Overloading
@@ -596,6 +605,8 @@ Building a variant of a generic enum works the same way: in `Option::Some(x)` th
 
 A **struct literal** binds a generic type's parameters from the contextual expected type (`var v: Vector<u8> = Vector { ... }`) or **explicitly**, naming the instantiation before the braces (`Vector<u8> { ... }`, §3.1). Explicit arguments bind all parameters left to right and must match the parameter count; they are how to build a generic value where no context exists (`var v = Vector<T> { ... }` inside a generic body). A bare generic literal with neither source is a compile-time error.
 
+**Type parameters are opaque.** Inside a generic body a value typed `T` is read, copied, stored, and dropped as a `T`, whatever the instantiation binds it to. Pointee transparency (§5.2) applies to the pointer and reference types *written* in the source — a `&T` parameter still reads as its `T` — never to the type a parameter is bound to: with `T = *var u64`, reading an `item: T` yields the pointer (deep-copied like any owning value), not the `u64` behind it. So `Vector<*var [u8]>` stores and owns the arrays themselves, and a generic body behaves the same for every instantiation. `move item` on such a value has type `T` and transfers whatever the bound type owns (§5.2).
+
 ### 4.8 Mutability
 
 Bindings are immutable by default:
@@ -603,7 +614,7 @@ Bindings are immutable by default:
 - **`const`** declares an immutable binding, **`var`** a mutable one.
 - **Parameters are immutable.** A function changes caller state only through `&var` / `*var` indirections passed to it.
 - **Assignment**, compound included, needs a mutable target: a `var` local, or a location reached through a `&var` / `*var`.
-- **`&var x`**, and `|&var x|` / `|move x|` captures, need `x` to be mutable. A plain `&x` borrow is always immutable, whatever the binding (§5.2).
+- **`&var x`**, and `|&var x|` / `|move x|` captures, need `x` to be mutable. A plain `&x` borrow is always immutable, whatever the binding (§5.2). One exception: `move` may clear a by-value **parameter** although parameters are immutable, because the callee owns it (§5.2).
 - Mutability travels with pointee transparency (§5.2): a field reached through a `&var T` is mutable even when the reference binding is `const`, and through a `&T` it is immutable even on a `var` binding. Direct fields and elements take the binding's mutability.
 
 ### 4.9 Data Layout
@@ -671,14 +682,20 @@ A pointer to a heap array points straight at the first element, so it drops into
 Ownership is **structural and automatic**. A value _owns heap_ if it is a `*T` / `*var T` / `*[T]` pointer, a closure (which owns its captured environment), or a struct / array / enum containing an owning member, element, or active payload. References and slices own nothing.
 
 - **Scope-end drop.** When an owning local goes out of scope — at every `return` path and at the fall-through — the runtime drops it, freeing the heap it owns. Dropping a pointer frees its allocation (a `*[T]` releases the malloc base at `user_ptr - 8`); dropping a `*[T]` first drops every element, all of which are initialised; dropping a struct / array / enum drops each owning field, element, or active payload; dropping a closure frees its environment. Recursive owning types, like a `Node` holding a `*Node`, stop at the first null pointer.
-- **`move` transfers ownership.** `var q = move p` copies the pointer into `q` and zeroes the source, so after `move p` the binding `p` is null and its scope-end drop does nothing. `move` gives back the operand's own pointer type, so a whole struct is transferred by moving a `*Struct`, or borrowed through `&var`, never by copying the struct.
+- **`move` transfers ownership.** `move` reads its operand like any read, but transfers what the value owns instead of copying it. The operand is a place: a variable, a field, or an element.
+  - On a **pointer** (`*T` / `*var T` / `*[T]`) it copies the pointer out and nulls the source: after `var q = move p` the binding `p` is null and its scope-end drop does nothing. The result has the pointer's own type.
+  - On a **value** (`T`: a struct, array, enum, or primitive) it yields a `T` whose owning members — pointers at any depth, the active enum payload included — are transferred and whose other members are copied. The source keeps its shape with those pointers nulled, so it still drops safely, and any later dereference through one of them is a use-after-move. A `T` that owns nothing is simply copied.
+  - On a **reference** (`&var T`) it does the same to the pointee and yields a `T`. Through an immutable `&T` it is allowed only when `T` owns nothing, since a real move writes the source.
+  - On a value typed by a **type parameter** it yields a `T` and acts on whatever the instantiation binds (§4.7): a pointer transfers, a value moves member-wise, a reference is copied because it owns nothing. This is how generic containers hand elements on: `std::vector`'s `push` stores `move item`, and its growth loop moves the old buffer's elements across, so an element keeps its address.
+  
+  Whenever the move writes its source, the source must be mutable (§4.8) — a pointer parameter counts as mutable for this purpose, since the callee owns it. A whole struct is therefore transferred either by moving a `*Struct` or by `move` on the struct value itself.
 - **Returning an owned value is explicit.** `return move v` hands the local's allocation to the caller and clears the source. A bare `return v` returns **by value**: like any read, a deep copy of what `v` holds, with the local's own heap freed by its scope-end drop. For a `*[T]` local that read is the **unsized array value** and is rejected like any bare heap-array use: write `move v` to transfer, `&v` to pass the view, or `new v` to return a fresh copy. `yield v` works the same way. A value built inside the `return` expression is owned by the caller directly.
 - **Pointer parameters take ownership.** A `*T` / `*var T` / `*[T]` parameter says "I take this allocation", so the caller must `move` a pointer in (`take(move p)`) or allocate inline (`take(new T {})`); a pointer is **never** borrowed. The callee owns it, and the parameter drops at the function's scope end like any owning local, unless moved on or returned. To lend a value, pass `&T` / `&var T`.
 - **By-value parameters follow assignment.** A non-pointer value is deep-copied into the parameter; references borrow without copying.
 - **Free-on-reassign.** Assigning to an owning binding (`buf = new […]`, `obj.field = move p`) drops what it currently owns first, so the old allocation is freed rather than leaked.
 - **Integer overflow** is a runtime fault in checked builds and wraps two's-complement in release builds; compile-time evaluation always faults. Division by zero faults in every build.
 - **Checked builds** null-check every dereference of a `*T`, so a use-after-move traps (`@llvm.trap`). **Release builds** skip the checks, so a use-after-move dereferences null and the OS faults. The null store in `move` stays in every build: it is the moved-from mark the drop machinery reads, which keeps drops and free-on-reassign single-free after a transfer.
-- **Definite use-after-move is a compile-time error.** The compiler tracks moves of bare locals flow-sensitively: after `move x`, or an owning capture `|move x|`, reading `x`, writing `x.field`, moving it again, or capturing it is rejected until a plain `=` rebinds it. Branches merge conservatively — a move survives a merge only when every falling-through path performs it — so a move under a condition, in one branch, in a loop body, or of a field (`move x.inner`) stays a runtime check.
+- **Definite use-after-move is a compile-time error.** The compiler tracks moves of bare locals flow-sensitively, for any local whose type owns heap (a pointer, or a value with owning members): after `move x`, or an owning capture `|move x|`, reading `x`, writing `x.field`, moving it again, or capturing it is rejected until a plain `=` rebinds it. Branches merge conservatively — a move survives a merge only when every falling-through path performs it — so a move under a condition, in one branch, in a loop body, or of a field (`move x.inner`) stays a runtime check.
 
 **Growth is manual.** A `*[T]` has a fixed length once allocated; there is no in-place resize or `realloc`. A growable collection is built by hand: allocate a larger `*var [T]` with a runtime-sized `new [value : count]`, copy the elements across, and reassign the owning field, which frees the old buffer. The standard library's `Vector<T>` (`std/vector.alloy`) and `String` (`std/string.alloy`) are written exactly this way; their mutating functions (`push`, `append`, …) take a `&var self` receiver and are called as methods (`vector.push(x)`).
 
@@ -704,6 +721,15 @@ With a value, the loop evaluates to that value — the same channel `yield` uses
 
 **`yield value`** produces the value of the **innermost enclosing value-position construct**: an `if`, a `match`, or a `for` / `while` with an `else` clause. A `yield` inside a loop that is not itself value-position passes out through that loop to the nearest value-position `if` or `match`, exiting the loop on the way and dropping its owned locals normally. A `yield` with no value-position construct around it is a compile-time error: a statement-position `if`, `match`, or loop has nothing to receive the value — `yield` passes through all three, `break` and `continue` through a statement-position `if` or `match` only, to their loop.
 
+**`panic [message]`** stops the program with a runtime fault, in **every** build mode — unlike the checks that guard indexing or `to`, it is not dropped in release builds. The optional message is a `&[u8]`; the fault prints it (a bare `panic` prints the word alone) and the process exits abnormally, like any other fault. Nothing after it runs, so it **terminates** for the path analysis below: it is the statement for a branch the programmer knows is unreachable but the compiler cannot prove so, and for an invariant whose violation has no recovery. Reached during compile-time evaluation (§7.1), a `panic` is a compile-time error carrying the message.
+
+```alloy
+fn head(items: &[u32]) -> u32 {
+    if (items.length() > 0) { return items[0]; }
+    panic "head of an empty slice";
+}
+```
+
 #### `if` as a Value
 
 An `if` in value position needs both branches (§3.1). Bare-expression branches yield their value implicitly; block branches yield with `yield`, and every path through such a block must yield:
@@ -715,7 +741,7 @@ var level = if (score > 90) { yield "high"; } else { yield "low"; };
 
 #### Path Termination
 
-A conservative flow analysis runs over every function body at compile time. A statement **terminates** when control cannot fall out of it: `return`, `break`, `continue`, and `yield` terminate; a block terminates when any statement in it does; an `if` with an `else` terminates when both branches do; a `match` terminates when every arm does; `while (true)` with no `break` reaching it never completes. Conditions are never assumed, and ordinary loops always count as skippable.
+A conservative flow analysis runs over every function body at compile time. A statement **terminates** when control cannot fall out of it: `return`, `break`, `continue`, `yield`, and `panic` terminate; a block terminates when any statement in it does; an `if` with an `else` terminates when both branches do; a `match` terminates when every arm does; `while (true)` with no `break` reaching it never completes. Conditions are never assumed, and ordinary loops always count as skippable.
 
 - **Definite return:** a function or lambda with a return type must terminate on every path; falling off the end is a compile-time error.
 - **Definite yield:** a bare-expression branch of a value `if` yields by itself and always counts as terminating; every block branch of a value `if` must terminate; a bare-expression arm of a value `match` likewise yields by itself; every block arm of a value `match` must terminate unless an external `else` supplies the fall-through value, in which case that `else` must terminate; the `else` of a value-yielding loop must terminate.
@@ -961,9 +987,9 @@ A comptime expression is then **replaced by its result**: its whole syntax tree 
 const a = #if (cond) 50 else 100;
 ```
 
-**Visible names.** A comptime expression may use literals, any function in the program (including ones defined later in the file), and enclosing `const` locals whose initializers are themselves compile-time evaluable — transitively, so a `const` built from literals, other compile-time constants, and calls over them counts. Runtime state is invisible: referencing a `var` binding, a parameter, or a `const` that depends on runtime state is a compile-time error.
+**Visible names.** A comptime expression may use literals, any function in the program (including ones defined later in the file), and enclosing `const` locals whose initializers are themselves compile-time evaluable — transitively, so a `const` built from literals, other compile-time constants, and calls over them counts. Runtime state is invisible: referencing a `var` binding, a parameter, or a `const` that depends on runtime state is a compile-time error. Inside a generic function the type parameters are visible as reflections (`#T`, §4.4); an expression naming one is evaluated **per instantiation**, when the parameter is bound, rather than once while checking, and every instantiation must succeed.
 
-A fault during compile-time evaluation — integer overflow, division by zero, an exhausted evaluation budget — is a compile-time error.
+A fault during compile-time evaluation — integer overflow, division by zero, an exhausted evaluation budget, a `panic` (§5.3) — is a compile-time error.
 
 ### 7.2 The Pointer Barrier & Sandboxing
 

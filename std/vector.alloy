@@ -31,7 +31,9 @@ pub fn length<T>(self vector: &Vector<T>) -> u64 {
 
 // Appends one element, growing the buffer when it is full. The new
 // buffer is filled with copies of the pushed element, so every slot is
-// initialized and reclaimable.
+// initialized and reclaimable; the elements in use then MOVE across
+// (section 5.2), so an owning element keeps its allocation and its
+// address, and the pushed item moves in the same way.
 pub fn push<T>(self vector: &var Vector<T>, item: T) {
     const in_use = vector.count;
     if (in_use == vector.capacity()) {
@@ -40,15 +42,15 @@ pub fn push<T>(self vector: &var Vector<T>, item: T) {
             grown_capacity = in_use * 2;
         }
         var grown: *var [T] = new [item : grown_capacity];
-        if (vector.storage is ::Some |&buffer|) {
+        if (vector.storage is ::Some |&var buffer|) {
             for ([..in_use]) |index| {
-                grown[index] = buffer[index];
+                grown[index] = move buffer[index];
             }
         }
         vector.storage = ::Some(move grown);
     }
     if (vector.storage is ::Some |&var buffer|) {
-        buffer[in_use] = item;
+        buffer[in_use] = move item;
     }
     vector.count = in_use + 1;
 }
@@ -77,25 +79,27 @@ pub fn view<T>(self vector: &Vector<T>) -> &[T] {
     return [];
 }
 
-// Overwrites the element at the index; ignores an index past the end.
+// Overwrites the element at the index, moving the item in; ignores an
+// index past the end.
 pub fn set<T>(self vector: &var Vector<T>, index: u64, item: T) {
     if (index >= vector.count) {
         return;
     }
     if (vector.storage is ::Some |&var buffer|) {
-        buffer[index] = item;
+        buffer[index] = move item;
     }
 }
 
 // Removes and returns the last element, or 'None' when empty. The
-// buffer is kept for future pushes.
+// element moves out (section 5.2), and the buffer is kept for future
+// pushes.
 pub fn pop<T>(self vector: &var Vector<T>) -> Option<T> {
     if (vector.count == 0) {
         return ::None;
     }
     vector.count -= 1;
-    if (vector.storage is ::Some |&buffer|) {
-        return ::Some(buffer[vector.count]);
+    if (vector.storage is ::Some |&var buffer|) {
+        return ::Some(move buffer[vector.count]);
     }
     return ::None;
 }
