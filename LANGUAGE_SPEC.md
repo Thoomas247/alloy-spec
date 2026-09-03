@@ -373,7 +373,7 @@ The two mix freely (`if (c) a else { yield b; }`), and an `else` may carry anoth
 - A `<` after a name opens a **generic argument list** when the tokens up to the matching `>` read as a comma-separated list of types and that `>` is immediately followed by `(` or `{`. So `f<a, b>(c)` is a generic call and `Vector<u8> { … }` a generic struct literal. Anywhere else `<` is the less-than operator: in `f(a < b, c > d)` the `>` is followed by `d`, so both are comparisons. Where the two readings are both possible the generic one **wins**, and a comparison written that way needs parentheses: `a < b > (c)` is the generic call `a<b>(c)`, and the comparison is `(a < b) > (c)`.
 - A `{` in **statement position** starts an anonymous struct literal when the next token is `.`, and a block otherwise — one token of lookahead, since every member initializer begins with `.` (`{ .x = 1 };` is a literal, `{ x = 1; }` a block). There is no empty anonymous struct literal, so `{}` is always an empty block. The same lookahead settles an `if` branch, where a block is also possible: `{` there starts a block unless the next token is `.`. Everywhere else in value position `{` starts a struct literal.
 
-**`is` capture versus bitwise OR.** A `|` right after an `is` test's type always opens a capture, never bitwise OR, and the capture binds tighter than any binary operator: `a is ::Some |b| && c` is `(a is ::Some |b|) && c`. Bitwise OR over an `is` result needs parentheses: `(a is ::Some) | b`.
+**`is` capture versus bitwise OR.** A `|` right after an `is` test's type always opens a capture, never bitwise OR, and the capture binds tighter than any binary operator: `a is ::Some |b| && c` is `(a is ::Some |b|) && c`. There is nothing to disambiguate: `|` takes integer operands only (§5.2), and an `is` test yields `bool`, so `a is ::Some | b` has no valid reading without the capture.
 
 **Capture typing.** A capture writes its modifier **before** the name, and there are only four forms:
 
@@ -795,7 +795,8 @@ fn add(self v: &Vec3, other: &Vec3) -> Vec3 { ... }   // v.add(other)
 - The receiver counts as the first argument for overload resolution.
 - **Dot-call precedence:** extensions win. When no extension or interface function (§6.2) has the name, `v.f(...)` calls through a function-typed field `f` of `v`.
 - `self` may appear only on the **first** parameter.
-- A **temporary receiver** — a call result, a fresh construction — may call an extension whose `self` is `&T`, and the temporary lives for the call. A `&var` receiver still needs a mutable place.
+- A **temporary receiver** — a call result, a fresh construction — may call an extension whose `self` is `&T`. A `&var` receiver still needs a mutable place.
+- **Temporaries live to the end of the statement.** A temporary made anywhere in a statement — a receiver, an argument, an operand — is dropped only when that statement completes, so a view borrowed from it (`print(&make().view())`) stays valid for the rest of the statement, and an inline `is` capture (§4.2) taken in an `if` condition may borrow from one through the body. A `while` condition is evaluated afresh each iteration, so its temporaries live for that iteration and drop at its end. A `match` or `for` subject lives through the whole construct, since its arms and body borrow it.
 - A **pointer `self`** (`*T` / `*var T`) takes ownership like any pointer parameter (§5.2): an owning place must transfer explicitly (`(move p).consume()`), and only a fresh value (`(new T {}).consume()`, a call result) passes bare.
 - When `self`'s type is an **interface** (`fn area(self s: &Shape) -> f32`), the extension is that interface function's default implementation (§6.2).
 
