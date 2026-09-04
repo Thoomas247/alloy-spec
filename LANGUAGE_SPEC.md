@@ -287,7 +287,7 @@ postfix_suffix  = "(" [ expr { "," expr } ] ")"                            (* ca
                 | "<" type { "," type } ">" "(" [ expr { "," expr } ] ")"  (* generic call *)
                 | "." identifier                                                  (* member access *)
                 | "[" expression "]"                                         (* array index *)
-                | "[" [ expression ] ".." expression "]" ;                   (* subslice *)
+                | "[" [ expression ] ".." [ expression ] "]" ;               (* subslice *)
 
 primary_expr    = literal
                 | identifier_expr
@@ -368,7 +368,15 @@ The two mix freely (`if (c) a else { yield b; }`), and an `else` may carry anoth
 
 **Range generators.** `[start..end]` is the array of integers from `start` (inclusive) to `end` (exclusive), so `[0..5]` is `[0, 1, 2, 3, 4]`; `[..end]` starts at `0`. Both bounds are integers of one type (§4.3; untyped literals default to `i32`), and a literal `end` below a literal `start` is a compile-time error. Literal bounds give a stack array `[T : end - start]`, runtime bounds need `new` (giving `*[T]`) — except as a `for` subject, where no array is built and runtime bounds are always fine (§5.3).
 
-**Subslicing.** `arr[start..end]` denotes the **unsized array value** `[T]` of elements `start` to `end` in place; `arr[..end]` starts at `0`. The subject may be any array form. Like any unsized value, the bare form is valid only where it is consumed in place (§5.2): a method receiver, an index or subslice subject, a `for` subject, an operand of `new` — `new arr[start..end]` copies the range into an owned `*[T]`. Anywhere else the borrow is written out: `&arr[start..end]` is the immutable view `&[T]`, `&var arr[start..end]` the mutable `&var [T]`, valid only when the subject is mutable; a bare subslice in a value position is a compile-time error. Bounds must satisfy `start <= end <= length`; breaking that is a runtime fault in checked builds. Like any reference, the view dangles once the subject is dropped, moved, or reallocated.
+**Subslicing.** `arr[start..end]` denotes the **unsized array value** `[T]` of elements `start` to `end` in place; `arr[..end]` starts at `0`, `arr[start..]` runs to the length, and `arr[..]` is the whole array. The subject may be any array form. Like any unsized value, the bare form is valid only where it is consumed in place (§5.2): a method receiver, an index or subslice subject, a `for` subject, an operand of `new` — `new arr[start..end]` copies the range into an owned `*[T]`. Anywhere else the borrow is written out: `&arr[start..end]` is the immutable view `&[T]`, `&var arr[start..end]` the mutable `&var [T]`, valid only when the subject is mutable; a bare subslice in a value position is a compile-time error. Bounds must satisfy `start <= end <= length`; breaking that is a runtime fault in checked builds. Like any reference, the view dangles once the subject is dropped, moved, or reallocated.
+
+**Constant array literals are static data.** An array literal whose elements are all constants — literals, payload-less enum variants, and nested literals of those — is program data like a string literal (§2.6): it is never rebuilt at runtime, and it is immutable, so `&var` over it is a compile-time error. A view borrowed from it is valid for the whole program, which makes `&[a, b, c][..]` the way to write a `&[T]` of known contents, as opposed to `[a, b, c]` for a `[T : 3]` and `new [a, b, c]` for a fresh `*[T]` copy:
+
+```alloy
+const stops = &[TokenKind::Semicolon, TokenKind::Import][..];   // &[TokenKind], static
+```
+
+Any other array literal is a temporary that lives to the end of its statement (§5.5), so a view borrowed from one dangles afterwards.
 
 **Disambiguation.** Two forms need lookahead, and an implementation **must** resolve them this way:
 
